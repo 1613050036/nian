@@ -6026,18 +6026,22 @@ ${openTodoBlock}${priorBlock}只输出 JSON。`;
       }
       topic._episodeId = topicEpisodeId;
     }
-    const eventHm = getLocalHm(parseMsgTimestamp(anchorTs), tz);
     for (const topic of persistQueue) {
       const topicKws = (topic.keywords || parsed.keywords || []).slice(0, 8);
       for (const item of (topic.memories || []).slice(0, 2)) {
-      let content = finalizeMemoryContent(String(item.content || '').trim(), anchorTs, tz, { asTodo: String(item.category || '') === '待办' });
+      const rawItem = String(item.content || '').trim();
+      // 每条碎片自己对时：用正文撞原话找发生时刻，禁止整批共用收尾钟点
+      const itemTs = guessMemoryAnchorTs(rawItem, msgs) || anchorTs;
+      const itemDate = getLocalDateStr(parseMsgTimestamp(itemTs), tz) || memoryDate;
+      const itemHm = getLocalHm(parseMsgTimestamp(itemTs), tz);
+      let content = finalizeMemoryContent(rawItem, itemTs, tz, { asTodo: String(item.category || '') === '待办' });
       if (!content) continue;
       let category = String(item.category || '日常点滴').trim();
       if (!allowed.has(category)) category = '日常点滴';
       // 含到期标记但未标待办时，升为待办
       if (category !== '待办' && /【到期[：:]/.test(content) && /记得|提醒|拍|发|打卡|到点/.test(content)) {
         category = '待办';
-        content = finalizeMemoryContent(content, anchorTs, tz, { asTodo: true });
+        content = finalizeMemoryContent(content, itemTs, tz, { asTodo: true });
       }
       if (shouldSkipMemoryItem(content, category, char.name, settings.username)) continue;
       if (brain.memoryContradictsCorrection(content, identityCorrections)) continue;
@@ -6045,7 +6049,7 @@ ${openTodoBlock}${priorBlock}只输出 JSON。`;
       const meta = {};
       if (item.importance != null) meta.importance = Math.max(0, Math.min(1, parseFloat(item.importance) || weight));
       else meta.importance = weight;
-      if (eventHm) meta.event_at = `${memoryDate} ${eventHm}`;
+      if (itemHm) meta.event_at = `${itemDate} ${itemHm}`;
       if (item.emotion && typeof item.emotion === 'object') {
         meta.emotion = {
           valence: Math.max(-1, Math.min(1, parseFloat(item.emotion.valence) || 0)),
@@ -6068,7 +6072,7 @@ ${openTodoBlock}${priorBlock}只输出 JSON。`;
         category,
         content,
         weight,
-        date: memoryDate,
+        date: itemDate,
         episodeId: topic._episodeId || null,
         keywords: topicKws,
         source: 'chat',
@@ -6281,28 +6285,31 @@ ${memoryTranscriptPersonRule(char.name, salientUser)}`;
 
     const allowed = new Set(['约定', '待办', '重要时刻', '偏好与习惯', '情感状态', '日常点滴']);
     const brain = require('./memory-brain-helper');
-    const eventHm = getLocalHm(parseMsgTimestamp(anchorTs), tz);
     const kws = (parsed.keywords || []).slice(0, 8);
     const salientIds = [];
     for (const item of (parsed.memories || []).slice(0, 2)) {
-      let content = finalizeMemoryContent(String(item.content || '').trim(), anchorTs, tz, { asTodo: String(item.category || '') === '待办' });
+      const rawItem = String(item.content || '').trim();
+      const itemTs = guessMemoryAnchorTs(rawItem, msgs) || anchorTs;
+      const itemDate = getLocalDateStr(parseMsgTimestamp(itemTs), tz) || memoryDate;
+      const itemHm = getLocalHm(parseMsgTimestamp(itemTs), tz);
+      let content = finalizeMemoryContent(rawItem, itemTs, tz, { asTodo: String(item.category || '') === '待办' });
       if (!content) continue;
       let cat = String(item.category || '约定').trim();
       if (!allowed.has(cat)) cat = '约定';
       if (cat !== '待办' && /【到期[：:]/.test(content)) {
         cat = '待办';
-        content = finalizeMemoryContent(content, anchorTs, tz, { asTodo: true });
+        content = finalizeMemoryContent(content, itemTs, tz, { asTodo: true });
       }
       if (shouldSkipMemoryItem(content, cat, char.name, settings.username)) continue;
       const meta = { importance: Math.min(1, parseFloat(item.weight) || 0.85) };
-      if (eventHm) meta.event_at = `${memoryDate} ${eventHm}`;
+      if (itemHm) meta.event_at = `${itemDate} ${itemHm}`;
       if (cat === '情感状态') meta.emotion = { valence: -0.3, arousal: 0.4, label: '情感' };
       const ir = brain.insertMemory({
         characterId: charId,
         category: cat,
         content,
         weight: Math.min(1, parseFloat(item.weight) || 0.85),
-        date: memoryDate,
+        date: itemDate,
         episodeId,
         keywords: kws,
         source: 'salient',
@@ -7137,6 +7144,42 @@ function formatMemoryContextTimestamp(dateStr, tz) {
   } catch {
     return dateStr || '';
   }
+}
+
+/**
+ * 为单条记忆碎片在对话窗里找更贴的发生时刻，避免整批共用「收尾那条」的时间。
+ * 用正文关键词去撞原话；撞不上再退回窗中/窗末。
+ */
+function guessMemoryAnchorTs(content, msgs) {
+  const list = Array.isArray(msgs) ? msgs : [];
+  if (!list.length) return null;
+  const strip = String(content || '')
+    .replace(/^\d{4}年\d{1,2}月\d{1,2}日(?:清晨|上午|中午|下午|晚上|夜里|夜深了)[，,\s]*/, '');
+  const tokens = strip.match(/[\u4e00-\u9fff]{2,6}|[A-Za-z0-9]{3,}/g) || [];
+  const stop = new Set([
+    '对方', '我们', '自己', '今天', '明天', '后天', '然后', '因为', '所以', '一个', '这个', '那个',
+    '什么', '没有', '已经', '还是', '可以', '觉得', '知道', '一下', '时候', '现在', '之前', '之后',
+    '记得', '提醒', '表示', '答应', '提到', '说说', '看看',
+  ]);
+  const keys = [...new Set(tokens.filter((t) => t.length >= 2 && !stop.has(t)))].slice(0, 14);
+  if (!keys.length) return list[Math.max(0, list.length - 1)]?.timestamp || null;
+  let best = null;
+  let bestScore = 0;
+  for (const m of list) {
+    const body = String(m.content || '');
+    if (!body) continue;
+    let s = 0;
+    for (const k of keys) {
+      if (body.includes(k)) s += k.length >= 4 ? 2 : 1;
+    }
+    if (s > bestScore) {
+      bestScore = s;
+      best = m;
+    }
+  }
+  if (best && bestScore >= 2) return best.timestamp;
+  // 弱匹配：用窗中间，比一律用最后一条更不容易全线同一时刻
+  return list[Math.floor((list.length - 1) / 2)]?.timestamp || list[list.length - 1]?.timestamp || null;
 }
 
 const MEMORY_TIME_PREFIX_RE = /^\d{4}年\d{1,2}月\d{1,2}日(清晨|上午|中午|下午|晚上|夜里|夜深了)/;

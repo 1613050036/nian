@@ -1810,7 +1810,8 @@ function fillExperienceHeader(n, kind) {
   const statusEl = document.getElementById('narrative-detail-status');
   const st = pointStatusInfo(n);
   if (titleEl) titleEl.textContent = n.title || (kind === 'branch' ? '细枝' : '话题');
-  if (metaEl) metaEl.textContent = formatPointDateRange(n.startedAt || n.dateFrom, n.dateTo || n.updatedAt);
+  // 顶栏日期用事件跨度，不用「最近改过」的 updatedAt（会把时间线拖到今天）
+  if (metaEl) metaEl.textContent = formatPointDateRange(n.startedAt || n.dateFrom, n.dateTo || n.startedAt || n.dateFrom);
   if (statusEl) {
     statusEl.textContent = st.label;
     statusEl.className = `brain-story-status brain-story-status--${st.cls}`;

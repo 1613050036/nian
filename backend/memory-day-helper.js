@@ -159,10 +159,27 @@ async function splitDayIntoPoints(charId, day, frags, { settings, maxPoints, mod
 
 /* ─────────── 第二步：拿组成部分和树求交集 ─────────── */
 
-function compTerms(c) {
+function hangNoiseNames() {
+  const s = getSettings();
+  const names = new Set();
+  const un = String(s.username || '').trim();
+  if (un) names.add(un.toLowerCase());
+  try {
+    // 挂枝比对时排除当前所有角色名（用户侧称呼已在 username）
+    const rows = db.prepare('SELECT name FROM characters WHERE COALESCE(name,\'\')!=\'\'').all();
+    for (const r of rows) {
+      const n = String(r.name || '').trim().toLowerCase();
+      if (n.length >= 2) names.add(n);
+    }
+  } catch { /* ignore */ }
+  return names;
+}
+
+function compTerms(c, noiseNames = null) {
+  const noise = noiseNames || hangNoiseNames();
   return [c?.name, ...(c?.aliases || [])]
     .map((x) => String(x || '').trim().toLowerCase())
-    .filter((x) => x.length >= 2 && !tree.isGenericTerm(x));
+    .filter((x) => x.length >= 2 && !tree.isParticipantNoise(x) && !noise.has(x));
 }
 
 // 含数字/拉丁字母的短名（N2、CET6、iPhone）本身就够专，两个字符就能认；
@@ -171,9 +188,9 @@ function containable(term) {
   return term.length >= 3 || (term.length >= 2 && /[a-z0-9]/.test(term));
 }
 
-function compsMatch(a, b) {
-  const ta = compTerms(a);
-  const tb = compTerms(b);
+function compsMatch(a, b, noiseNames = null) {
+  const ta = compTerms(a, noiseNames);
+  const tb = compTerms(b, noiseNames);
   for (const x of ta) {
     for (const y of tb) {
       if (x === y) return true;
@@ -185,11 +202,24 @@ function compsMatch(a, b) {
   return false;
 }
 
+/** 单零件支线：其他人名/专名物可挂；用户·角色名与地点单独撞上不算 */
+function sideBranchEligible(matched) {
+  const side = matched
+    .filter((m) => m.treeType !== 'core')
+    .sort((a, b) => b.weight - a.weight)[0];
+  if (!side) return false;
+  if (side.treeType === 'thing' && side.weight >= 1) return true;
+  if (side.treeType === 'person') return side.weight >= 1; // 已滤掉用户/角色名
+  if (side.treeType === 'place') return false;
+  return side.weight >= 1;
+}
+
 /** 记忆点的组成部分 ∩ 某根枝干的组成部分 */
 function matchAgainstTree(pointComps, treeComps) {
+  const noise = hangNoiseNames();
   const matched = [];
   for (const pc of pointComps) {
-    const hit = treeComps.find((tc) => compsMatch(pc, tc));
+    const hit = treeComps.find((tc) => compsMatch(pc, tc, noise));
     if (!hit) continue;
     const w = (pc.type === 'core' && hit.type === 'core')
       ? COMP_WEIGHT.core
@@ -207,13 +237,17 @@ function matchAgainstTree(pointComps, treeComps) {
 function graftDecision(matched) {
   const score = matched.reduce((s, m) => s + m.weight, 0);
   if (!matched.length) return { target: 'none', score: 0, matched };
+  // 命中事件核，或两个以上实质零件 → 才算同一件事的延续
   if (matched.some((m) => m.treeType === 'core') || score >= 2) {
     return { target: 'trunk', score, matched };
   }
-  const side = matched
-    .filter((m) => m.treeType !== 'core')
-    .sort((a, b) => b.weight - a.weight)[0];
-  if (side && score >= 1) return { target: 'branch', key: side.treeKey, score, matched };
+  // 只对上一个零件：必须是专名物/人；禁止「对方」「家里」一类把串聊焊成细枝
+  if (sideBranchEligible(matched) && score >= 1) {
+    const side = matched
+      .filter((m) => m.treeType !== 'core')
+      .sort((a, b) => b.weight - a.weight)[0];
+    return { target: 'branch', key: side.treeKey, score, matched };
+  }
   return { target: 'none', score, matched };
 }
 

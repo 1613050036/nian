@@ -2435,15 +2435,46 @@ function getBrainNow(charId) {
   };
 }
 
+/** 正文开头「2026年10月9日晚上，…」→ 日历日 + 时段 */
+const CONTENT_DAY_SLOT_RE = /^(\d{4})年(\d{1,2})月(\d{1,2})日(清晨|上午|中午|下午|晚上|夜里|夜深了)/;
+const SLOT_ORDER = { 清晨: 1, 上午: 2, 中午: 3, 下午: 4, 晚上: 5, 夜里: 6, 夜深了: 7 };
+
+function contentDaySlot(m) {
+  const hit = String(m?.content || '').match(CONTENT_DAY_SLOT_RE);
+  if (!hit) return null;
+  const date = `${hit[1]}-${String(hit[2]).padStart(2, '0')}-${String(hit[3]).padStart(2, '0')}`;
+  return { date, slot: hit[4] };
+}
+
 function memDay(m) {
-  return String(m?.date || m?.created_at || '').slice(0, 10);
+  const fromContent = contentDaySlot(m)?.date;
+  if (fromContent) return fromContent;
+  const meta = parseMemoryMeta(m?.meta);
+  const eventDay = String(meta.event_at || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(eventDay)) return eventDay;
+  const d = String(m?.date || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  return String(m?.created_at || '').slice(0, 10);
+}
+
+/** 同日排序键：时段词 > event_at 钟点 > id */
+function memSortKey(m) {
+  const day = memDay(m) || '9999-99-99';
+  const slot = contentDaySlot(m)?.slot;
+  if (slot && SLOT_ORDER[slot]) return `${day}T${SLOT_ORDER[slot]}`;
+  const meta = parseMemoryMeta(m?.meta);
+  const hm = String(meta.event_at || '').match(/(?:T|\s)(\d{2}):(\d{2})/);
+  if (hm) return `${day}T${hm[1]}${hm[2]}`;
+  const createdHm = String(m?.created_at || '').match(/(?:T|\s)(\d{2}):(\d{2})/);
+  if (createdHm) return `${day}T${createdHm[1]}${createdHm[2]}`;
+  return `${day}T99${String(Number(m?.id) || 0).padStart(8, '0')}`;
 }
 
 function sortByDay(rows) {
   return [...(rows || [])].sort((a, b) => {
-    const da = memDay(a);
-    const db = memDay(b);
-    if (da !== db) return da.localeCompare(db);
+    const ka = memSortKey(a);
+    const kb = memSortKey(b);
+    if (ka !== kb) return ka.localeCompare(kb);
     return (Number(a.id) || 0) - (Number(b.id) || 0);
   });
 }
@@ -2491,15 +2522,13 @@ function extractMemoryTime(mOrCreatedAt, maybeMeta) {
   if (mOrCreatedAt && typeof mOrCreatedAt === 'object') {
     createdAt = mOrCreatedAt.created_at;
     meta = parseMemoryMeta(mOrCreatedAt.meta);
-    // 优先：对话发生时刻（总结写入时存进 meta.event_at）
+    // 优先：正文时段词（「晚上」等）——时间线给人看的是叙事时间，不是批次收尾钟点
+    const slot = contentDaySlot(mOrCreatedAt)?.slot;
+    if (slot) return slot;
+    // 次选：总结写入的 event_at
     const eventAt = String(meta.event_at || '').trim();
     const hmFromEvent = eventAt.match(/(?:T|\s)(\d{2}):(\d{2})/);
     if (hmFromEvent) return `${hmFromEvent[1]}:${hmFromEvent[2]}`;
-    // 次选：正文里的时段词（旧碎片没有 event_at）
-    const slot = String(mOrCreatedAt.content || '').match(
-      /^\d{4}年\d{1,2}月\d{1,2}日(清晨|上午|中午|下午|晚上|夜里|夜深了)/
-    );
-    if (slot) return slot[1];
   }
   const raw = String(createdAt || '');
   const m = raw.match(/(?:T|\s)(\d{2}):(\d{2})/);
@@ -2518,9 +2547,102 @@ function mapMemoryStage(m) {
     category: m.category || '',
     content: m.content || '',
     source: m.source || '',
+    episodeId: m.episode_id || null,
     mood: inferMoodLabel(valence, meta.mood_label || emotion.label),
     moodValence: Number.isFinite(valence) ? valence : null,
   };
+}
+
+/** 从对话窗原话给碎片重对时段（修「整条线同一个时间」的旧数据） */
+function guessStageTimeFromMsgs(content, msgs) {
+  const list = Array.isArray(msgs) ? msgs : [];
+  if (!list.length) return null;
+  const strip = String(content || '')
+    .replace(/^\d{4}年\d{1,2}月\d{1,2}日(?:清晨|上午|中午|下午|晚上|夜里|夜深了)[，,\s]*/, '');
+  const tokens = strip.match(/[\u4e00-\u9fff]{2,6}|[A-Za-z0-9]{3,}/g) || [];
+  const stop = new Set([
+    '对方', '我们', '自己', '今天', '明天', '后天', '然后', '因为', '所以', '一个', '这个', '那个',
+    '什么', '没有', '已经', '还是', '可以', '觉得', '知道', '一下', '时候', '现在', '之前', '之后',
+  ]);
+  const keys = [...new Set(tokens.filter((t) => t.length >= 2 && !stop.has(t)))].slice(0, 14);
+  let best = null;
+  let bestScore = 0;
+  for (const m of list) {
+    const body = String(m.content || '');
+    if (!body) continue;
+    let s = 0;
+    for (const k of keys) if (body.includes(k)) s += k.length >= 4 ? 2 : 1;
+    if (s > bestScore) { bestScore = s; best = m; }
+  }
+  if (!best || bestScore < 2) return null;
+  const ts = best.timestamp;
+  if (!ts) return null;
+  // 与 cron.getLocalHm 同思路：ISO 用本地时段词
+  try {
+    const d = new Date(String(ts).includes('T') || String(ts).includes('Z') || String(ts).includes('+')
+      ? ts
+      : String(ts).replace(' ', 'T') + 'Z');
+    if (Number.isNaN(d.getTime())) return null;
+    const hour = Number(new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false, hourCycle: 'h23',
+    }).formatToParts(d).find((p) => p.type === 'hour')?.value || 0);
+    const slot = hour < 6 ? '夜深了' : hour < 9 ? '清晨' : hour < 11 ? '上午'
+      : hour < 14 ? '中午' : hour < 18 ? '下午' : hour < 22 ? '晚上' : '夜里';
+    const day = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d);
+    return { date: day, time: slot };
+  } catch {
+    return null;
+  }
+}
+
+function enrichStagesWithEpisodeTimes(stages) {
+  const list = Array.isArray(stages) ? stages : [];
+  if (list.length < 2) return list;
+  const times = list.map((s) => s.time || '');
+  const allSame = times.every((t) => t && t === times[0]);
+  if (!allSame) return list;
+  const byEp = new Map();
+  for (const s of list) {
+    const ep = Number(s.episodeId) || 0;
+    if (!ep) continue;
+    if (!byEp.has(ep)) byEp.set(ep, []);
+    byEp.get(ep).push(s);
+  }
+  if (!byEp.size) return list;
+  for (const [epId, group] of byEp) {
+    let msgs = [];
+    try {
+      const ep = db.prepare(
+        `SELECT msg_id_from, msg_id_to, character_id FROM memory_episodes WHERE id=?`
+      ).get(epId);
+      if (!ep?.msg_id_from || !ep?.msg_id_to) continue;
+      msgs = db.prepare(
+        `SELECT id, content, timestamp FROM messages
+         WHERE character_id=? AND id>=? AND id<=? AND is_dream=0
+         ORDER BY id ASC LIMIT 80`
+      ).all(ep.character_id, ep.msg_id_from, ep.msg_id_to);
+    } catch { continue; }
+    if (msgs.length < 2) continue;
+    for (const s of group) {
+      const hit = guessStageTimeFromMsgs(s.content, msgs);
+      if (!hit) continue;
+      s.time = hit.time;
+      if (hit.date) s.date = hit.date;
+    }
+  }
+  // 按重对后的日+时段再排一次
+  const order = { 清晨: 1, 上午: 2, 中午: 3, 下午: 4, 晚上: 5, 夜里: 6, 夜深了: 7 };
+  return [...list].sort((a, b) => {
+    const da = String(a.date || '');
+    const db_ = String(b.date || '');
+    if (da !== db_) return da.localeCompare(db_);
+    const ta = order[a.time] || 50;
+    const tb = order[b.time] || 50;
+    if (ta !== tb) return ta - tb;
+    return (Number(a.id) || 0) - (Number(b.id) || 0);
+  });
 }
 
 function loadMemoriesByIds(ids) {
@@ -2594,7 +2716,7 @@ function getBrainExperiences(charId) {
           status: fallenOff ? 'fallen' : n.status,
           dirty: narrativeHelper.isDirty(n),
           dateFrom: startedAt,
-          dateTo: span.dateTo || updatedAt || startedAt,
+          dateTo: span.dateTo || startedAt,
           startedAt,
           updatedAt: updatedAt || startedAt,
           stageCount: summary.stageCount,
@@ -2668,7 +2790,12 @@ function getBrainExperiences(charId) {
         if (!existing.length) tree.rebuildNarrativeLinks(charId);
       } catch { /* ignore */ }
     }
-    edges = tree.listNarrativeLinks(charId, { livingIds: living.map((x) => x.id) });
+    edges = tree.listNarrativeLinks(charId, { livingIds: living.map((x) => x.id) })
+      .filter((e) => {
+        const t = String(e.type || 'related');
+        if (t === 'continues' || t === 'sequel') return true;
+        return (Number(e.score) || 0) >= 0.48;
+      });
   } catch (e) {
     console.warn('[brain] narrative edges', e.message);
   }
@@ -2790,7 +2917,9 @@ function getExperienceDetail(charId, kind, id) {
     const parent = db.prepare(
       `SELECT * FROM memory_narratives WHERE id=? AND character_id=?`
     ).get(b.narrative_id, charId);
-    const stages = sortByDay(loadMemoriesByIds(tree.parseIds(b.linked_memory_ids))).map(mapMemoryStage);
+    const stages = enrichStagesWithEpisodeTimes(
+      sortByDay(loadMemoriesByIds(tree.parseIds(b.linked_memory_ids))).map(mapMemoryStage)
+    );
     const span = dateSpanOf(stages);
     const startedAt = span.dateFrom || String(b.created_at || '').slice(0, 10);
     const pk = parent ? tree.getNarrativeKind(parent) : 'event';
@@ -2825,7 +2954,9 @@ function getExperienceDetail(charId, kind, id) {
     ).get(kid, charId);
     if (!n) return null;
     const tree = require('./memory-tree-helper');
-    const trunkStages = sortByDay(loadMemoriesByIds(parseLinkedIds(n.linked_memory_ids)));
+    const trunkStages = enrichStagesWithEpisodeTimes(
+      sortByDay(loadMemoriesByIds(parseLinkedIds(n.linked_memory_ids))).map(mapMemoryStage)
+    );
     const branches = tree.listBranches(n.id).map((b) => ({
       id: b.id,
       key: b.component_key,
@@ -2836,7 +2967,9 @@ function getExperienceDetail(charId, kind, id) {
       fallen: !!(b.fallen_at || '').trim(),
       moodLabel: b.mood_label || '',
       stageCount: tree.parseIds(b.linked_memory_ids).length,
-      stages: sortByDay(loadMemoriesByIds(tree.parseIds(b.linked_memory_ids))).map(mapMemoryStage),
+      stages: enrichStagesWithEpisodeTimes(
+        sortByDay(loadMemoriesByIds(tree.parseIds(b.linked_memory_ids))).map(mapMemoryStage)
+      ),
     }));
     const allStages = [
       ...trunkStages,
@@ -2848,20 +2981,45 @@ function getExperienceDetail(charId, kind, id) {
     const startedAt = span.dateFrom || createdDay || updatedAt;
     const summary = tree.treeSummary(n);
 
-    const relatedRaw = tree.listRelatedNarrativeIds(n.id, charId);
+    // 详情图/相关芯片：只留够像的；弱 related、续写边、已落成前传/续集的都不塞进来
+    const DISPLAY_RELATED_MIN = 0.52;
+    const DISPLAY_RELATED_CROSS = 0.62;
+    const DISPLAY_RELATED_MAX = 4;
+    const hubKind = tree.getNarrativeKind(n) || 'event';
+    const sequelIds = new Set();
+    if (Number(n.sequel_of)) sequelIds.add(Number(n.sequel_of));
+    try {
+      const sqRows = db.prepare(
+        `SELECT id FROM memory_narratives WHERE sequel_of=? AND character_id=?`
+      ).all(Number(n.id), charId);
+      for (const sq of sqRows) sequelIds.add(Number(sq.id));
+    } catch { /* ignore */ }
+    const relatedRaw = (tree.listRelatedNarrativeIds(n.id, charId) || [])
+      .filter((r) => {
+        const t = String(r.type || 'related');
+        if (t === 'continues' || t === 'sequel') return false;
+        if (sequelIds.has(Number(r.id))) return false;
+        return (Number(r.score) || 0) >= DISPLAY_RELATED_MIN;
+      })
+      .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
     const related = [];
-    for (const r of relatedRaw.slice(0, 8)) {
+    for (const r of relatedRaw) {
+      if (related.length >= DISPLAY_RELATED_MAX) break;
       const row = db.prepare(
         `SELECT * FROM memory_narratives WHERE id=? AND character_id=?`
       ).get(r.id, charId);
       if (!row || isLeafRow(row)) continue;
       const rs = tree.treeSummary(row);
+      const rk = rs.kind || 'event';
+      const score = Number(r.score) || 0;
+      // 跨大类（事件↔用户画像等）更严，避免「看起来无关」
+      if (rk !== hubKind && score < DISPLAY_RELATED_CROSS) continue;
       related.push({
         id: row.id,
         title: row.title || '相关话题',
         linkType: r.type || 'related',
-        score: r.score,
-        treeKind: rs.kind || 'event',
+        score,
+        treeKind: rk,
         treeKindLabel: rs.kindLabel || '事件',
         stageCount: rs.stageCount,
         tier: rs.tier || 'hot',
@@ -2869,7 +3027,8 @@ function getExperienceDetail(charId, kind, id) {
       });
     }
 
-    const livingBranches = branches.filter((b) => !b.fallen && b.key !== 'core' && b.type !== 'core');
+    const livingBranches = branches.filter((b) => !b.fallen && b.key !== 'core' && b.type !== 'core'
+      && ((b.stages && b.stages.length) || Number(b.stageCount) > 0 || String(b.name || '').trim()));
     const detailBase = {
       kind: 'narrative',
       id: n.id,
@@ -2877,12 +3036,13 @@ function getExperienceDetail(charId, kind, id) {
       gist: n.content || '',
       status: isLeafRow(n) ? 'fallen' : n.status,
       dirty: require('./memory-narrative-helper').isDirty(n),
+      // 时间跨度只跟挂上的碎片走，不用「最近改过话题」的 content_updated_at
       dateFrom: startedAt,
-      dateTo: span.dateTo || updatedAt || startedAt,
+      dateTo: span.dateTo || startedAt,
       dateLabel: span.label || startedAt,
       startedAt,
       updatedAt: updatedAt || startedAt,
-      stages: trunkStages.map(mapMemoryStage),
+      stages: trunkStages,
       components: summary.components,
       branches,
       related,
@@ -2894,7 +3054,8 @@ function getExperienceDetail(charId, kind, id) {
       stance: n.stance || '',
       leaf: isLeafRow(n),
     };
-    const hasGraph = livingBranches.length > 0 || related.length > 0;
+    const hasSequelLink = sequelIds.size > 0;
+    const hasGraph = livingBranches.length > 0 || related.length > 0 || hasSequelLink;
     detailBase.hasGraph = hasGraph;
     detailBase.characterId = charId;
     detailBase.sequelOf = Number(n.sequel_of) || 0;

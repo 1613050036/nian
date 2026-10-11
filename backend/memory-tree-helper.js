@@ -17,7 +17,8 @@ const { scoreTextsAgainst } = require('./embed-helper');
 const TIER_ORDER = { hot: 0, warm: 1, cool: 2, dormant: 3 };
 // 都配 scoreTextsAgainst 的 0..1 相关度。RELATED_COS 只是问 LLM 之前的粗筛，
 // 后面还有 llmHits 把关，所以放宽一点，让真相关的别在这一步就被拦掉
-const RELATED_COS = 0.35;
+// 自动焊 related 边的门槛；详情展示还会再抬一档过滤弱边
+const RELATED_COS = 0.42;
 const STRONG_TITLE_SCORE = 0.45;
 const COOL_MIN_SCORE = 0.32;
 
@@ -174,7 +175,20 @@ function parseComponents(raw) {
 }
 
 function isGenericTerm(s) {
-  return /^(他|她|它|他们|她们|同事|同学|朋友|那个人|那本书|那个|这个|朋友们|大家|资料|书)$/.test(String(s || '').trim());
+  // 泛称不能拿来当挂枝依据；具体人名（同事小李等）仍可挂细枝
+  return /^(他|她|它|他们|她们|同事|同学|朋友|那个人|那本书|那个|这个|朋友们|大家|资料|书|对方|用户|旅人|咱|我们|你|我)$/.test(String(s || '').trim());
+}
+
+/** 用户/角色称呼：几乎每段对话都有，单独命中时不能当细枝依据；其他人名照挂 */
+function isParticipantNoise(term, charName = '', userName = '') {
+  const t = String(term || '').trim().toLowerCase();
+  if (!t || t.length < 2) return true;
+  if (isGenericTerm(t)) return true;
+  const cn = String(charName || '').trim().toLowerCase();
+  const un = String(userName || '').trim().toLowerCase();
+  if (cn && (t === cn || cn.includes(t) || t.includes(cn))) return true;
+  if (un && (t === un || un.includes(t) || t.includes(un))) return true;
+  return false;
 }
 
 function dedupeComponents(list) {
@@ -1053,6 +1067,8 @@ async function routeFragmentToTrees(charId, frag, { settings, actives } = {}) {
     { queryEmb: frag.embedding, corpus }
   );
 
+  // 挂已有事件树要更严：串聊里夹的旁枝别因为「有点像 / 提到同一个人」就焊进来
+  const ATTACH_REL_MIN = 0.55;
   const candidates = [];
   for (let i = 0; i < living.length; i++) {
     const rel = relScores[i] || 0;
@@ -1060,12 +1076,22 @@ async function routeFragmentToTrees(charId, frag, { settings, actives } = {}) {
     const comps = parseComponents(n.components);
     if (!comps.length) continue;
     let hits = lexicalHits(frag.content, comps);
+    let viaLlm = false;
     if (!hits.length) {
-      if (rel < RELATED_COS) continue;
+      if (rel < ATTACH_REL_MIN) continue;
       hits = await llmHits(settings, frag, n, comps);
+      viaLlm = true;
+      // 纯靠模型猜、又没有字面命中：宁可不挂，留给新建记忆点
+      if (!hits.length || (viaLlm && rel < 0.62 && !hits.includes('core'))) continue;
     }
     const decision = routeDecision(hits, comps);
     if (decision.target === 'none') continue;
+    // 只命中用户/角色名或地点、相关度又一般 → 串聊，不挂；其他人名/专名物照挂
+    if (decision.target === 'branch' && rel < ATTACH_REL_MIN && !viaLlm) {
+      const hitComp = comps.find((c) => c.key === decision.key);
+      if (hitComp?.type === 'place') continue;
+      if (hitComp && isParticipantNoise(hitComp.name, char?.name, userName)) continue;
+    }
     candidates.push({ n, comps, decision, score: Math.max(hits.length * 0.2, rel), hits });
   }
   if (!candidates.length) return { linked: false };
@@ -1391,7 +1417,7 @@ function listRelatedNarrativeIds(narrativeId, characterId) {
       id: Number(r.from_id) === id ? Number(r.to_id) : Number(r.from_id),
       type: r.type || 'related',
       score: Number(r.score) || 0,
-    }));
+    })).sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
   } catch {
     return [];
   }
@@ -1448,6 +1474,7 @@ module.exports = {
   listNarrativesByKind,
   createNarrativeWithComponents,
   isGenericTerm,
+  isParticipantNoise,
   collectTreeLinkedIds,
   collectAllTreeLinkedIds,
   appendTrunkLink,
