@@ -1691,13 +1691,17 @@ function promptSafeMoodLabel(view = {}) {
 
 /** 人设软硬：用于口吻/心情块门控——禁的是 AI 客服接情绪，不是角色自己的温柔 */
 const SOFT_PERSONA_RE = /温柔|柔和|温和|细腻|体贴|软萌|好说话|好脾气|暖心|会哄|照顾人|亲切|柔情|心软|共情|好哄/;
-const SHARP_PERSONA_RE = /毒舌|损人|爱损|冷淡|高冷|暴躁|火爆|刻薄|刺|嘴贱|阴阳|呛人|凶巴巴/;
+// 不用单独「刺」：会误伤「讽刺」注解；毒舌≠训人爹味
+const SHARP_PERSONA_RE = /毒舌|损人|爱损|冷淡|高冷|暴躁|火爆|刻薄|刺人|带刺|嘴贱|阴阳|呛人|凶巴巴/;
+/** 管教/支配/S 向：可以说「长本事了」一类训人口吻；其余角色禁止套。勿用「掌控欲/占有欲」（恋爱拉扯≠训人爹味） */
+const LECTURE_PERSONA_RE = /S属性|Dom属性|DOM属性|\bDom\b|\bDomme\b|支配型|支配欲强|训诫|管教型|调教|主奴|爹味|家长式|严厉管教|服从训练|主人调教|奴性训练/;
 
 function characterToneProfile(char = {}) {
   const blob = `${char.personality || ''} ${char.emotion_style || ''} ${char.behavior || ''} ${char.language_style || ''} ${char.intro || ''}`;
   const soft = SOFT_PERSONA_RE.test(blob);
   const sharp = SHARP_PERSONA_RE.test(blob);
-  return { soft, sharp, blob };
+  const lecture = LECTURE_PERSONA_RE.test(blob);
+  return { soft, sharp, lecture, blob };
 }
 
 function buildReplyToneBlock(char, state, opts = {}) {
@@ -1706,9 +1710,11 @@ function buildReplyToneBlock(char, state, opts = {}) {
   const tone = characterToneProfile(char);
   const softHint = tone.soft
     ? '人设偏温柔/软：可以轻声、给人留台阶、话软一点——但必须是你这个人的温柔，不是客服腔。'
-    : tone.sharp
-      ? '人设偏冲/淡：可以别扭、淡、损、懒得给好脸色。'
-      : '可以别扭、淡、损、懒得给好脸色，也可以轻声软一点——看【性格】。';
+    : tone.lecture
+      ? '人设带管教/支配/S 向：可以压、可以训，按人设分寸来。'
+      : tone.sharp
+        ? '人设偏冲/淡：可以别扭、淡、损、懒得给好脸色。'
+        : '语气按【性格】来，不要套居高临下训人腔或万能温柔模板。';
   const lines = [
     `【心里已经有的】这是你现在自己的心情，会渗进这轮怎么说。按【性格】带出来：${softHint}也可以压着不说。不要报心情，不要切成心理咨询/万能陪伴式安抚，也不要因为对方开口就瞬间没事。${hasExamples ? '语感仍是你的，别照抄例句。' : ''}`,
   ];
@@ -1748,7 +1754,9 @@ function buildReplyToneBlock(char, state, opts = {}) {
       lines.push(`对方这轮偏 ${id}，接的时候要看见，但你自己的反应仍按性格，不要跟着演同一种。`);
       lines.push(tone.soft
         ? '对方情绪不好：用你自己的温柔短接一下就好（可以轻声、可以先顺着说一句），禁止滑成「我理解你的感受」「你的情绪是被允许的」「有什么都可以跟我说」这类 AI 接情绪。'
-        : '对方情绪不好：用你这个人会有的反应接（可以损一句再问、可以别扭地递台阶、也可以淡一句），禁止突然切成心理咨询/万能陪伴腔。');
+        : tone.sharp
+          ? '对方情绪不好：用你这个人会有的反应接（可以损一句再问、可以别扭地递台阶、也可以淡一句），禁止突然切成心理咨询/万能陪伴腔。'
+          : '对方情绪不好：用你这个人会有的反应接，禁止突然切成心理咨询/万能陪伴腔。');
     }
   } else if (!mundane && sensed && sensed !== 'neutral' && sensed !== 'angry') {
     lines.push(`对方这轮偏 ${sensed}，接的时候要看见，反应按性格。`);

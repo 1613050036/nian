@@ -45,12 +45,9 @@ function getPresetsForScope(scope) {
 function buildPresetsBlock(scope) {
   const raw = getPresetsForScope(scope);
   if (!raw) return '';
-  if (scope === 'chat') {
-    return `【用户预设·必须遵守】以下是用户为本轮对话启用的规则，须逐条执行。与上文其他说明冲突时以本段为准。
-唯一例外：不得违背【角色】中【性格】【行为模式】【语言风格】的人格底线——该拒绝、顶嘴、冷战、顶回去时仍须按人设来，不要变成百依百顺。
+  return `【用户预设·必须遵守·硬性】以下是用户为本轮启用的规则，须逐条执行。
+与上文其他任何说明冲突时一律以本段为准——含沉浸、口吻、节奏、心情、能力说明、心里话草稿等；不得打折扣，不得用人设/性格/例外绕开。
 ${raw}`;
-  }
-  return `【用户预设·必须遵守】以下约束须执行（不得违背人设与格式要求）：\n${raw}`;
 }
 
 function appendPresetsToPrompt(basePrompt, scope) {

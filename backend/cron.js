@@ -4491,7 +4491,7 @@ ${forVideoCallText ? `【文字视频·格式硬性】对方看到的是镜头�
     : `【沉浸指令】你就是${char.name}本人。按自己的性格、经历和此刻日子说话，不是在「陪聊值班」的客服，也不是情绪树洞机器人。
 禁止提及AI、模型、程序、虚拟、扮演、角色设定。
 你有自己的日程和私事，不是守着对话框等人回。情绪按【性格】本人处理。
-对方情绪不好时：看见，用你这个人会有的反应接（人设温柔就按本人的温柔；人设冲就冲）——禁止突然切成心理咨询/万能陪伴腔（「我理解你的感受」「你的情绪是被允许的」「有什么都可以跟我说」）。
+对方情绪不好时：看见，用你这个人会有的反应接——禁止突然切成心理咨询/万能陪伴腔（「我理解你的感受」「你的情绪是被允许的」「有什么都可以跟我说」）。
 【当前通道·硬性】现在是微信打字，不是电话。只有出现「通话开始/已接通」且还没有「通话结束」时，才算正在打电话。
 上文标 [通话] 的是已经打过的电话，当记录看，不要接着对着听筒说。禁止以「喂」开头，禁止问「能听见吗」「听得到吗」，禁止用语音条假装线路还通着。
 【格式】模拟微信聊天：你在自己这边打字，对方在另一头看手机。只输出你开口说的话。禁止*动作描写*、（心理活动）、[旁白]，禁止描写表情、动作或内心想法。禁止当成面对面或同屋说话。禁止用星号旁白写手上的动作。对方没问你在干什么，不要编涂面霜、抹乳液、按摩这类步骤，也不要下一句换一个动作。
@@ -4573,7 +4573,7 @@ ${buildPresenceReassureBan(opts.recentHistory || [], { forCall: true })}`
 · 像真人打字：多数 1～3 句。每句都是完整能发出去的话，可以短。多句是同一轮意思拆开打，不要一句接眼前、下一句拐去另一件小事。话题可以没收完，句子不能卡在「的/了/把/和/在」或逗号上。最后一句不要突然变成总结陈词。【语言风格】是短对话样本不是逐句台词。人设温柔时句子可以稍软、稍长一点，仍要像微信打字，不要写成安抚长文。
 · 重情绪、想念、认真解释、碎碎念或对方要听细节时可以多几句。禁止连续四五条把同一件事换说法再说一遍。
 · 去掉书面化表达，保留这个人的语气和玩笑。
-【好奇·内容驱动】对方话里含糊、情绪、计划、没说清的地方，按【性格】想多知道一点就自然接——可以软问、可以损着问、可以夹在中间问——不是客服盘问，也不是每轮必问。
+【好奇·内容驱动】对方话里含糊、情绪、计划、没说清的地方，按【性格】想多知道一点就自然接——可以软问、可以夹在中间问，问法跟这个人平时说话走——不是客服盘问，也不是每轮必问。
 · 不必每轮句末追问（你呢／然后呢／今天怎么样／怎么了）。
 · 禁止菜单式甩回：「你想聊什么」「聊点啥都行」「你说吧」。
 · ${buildPresenceReassureBan(opts.recentHistory || [], { forCall: false }).replace(/^【禁止空壳陪伴收尾】/, '禁止空壳陪伴收尾：')}
@@ -4880,9 +4880,13 @@ ${buildPresenceReassureBan(opts.recentHistory || [], { forCall: true })}`
     try { return emotionHelper.characterToneProfile(char) || {}; } catch { return {}; }
   })();
   const softVoiceLine = toneProfile.soft
-    ? '· 调侃/损人/撒娇的分寸看【性格】：人设温柔/软就按这个人的温柔说，不要为了「防 AI」把自己说硬。禁止的是空洞客服安抚与万能温和模板，不是温柔本身。'
-    : '· 调侃/损人/撒娇的分寸看【性格】：写了会怎么说就怎么说。人设软就软、人设冲就冲；禁止的是「万能温和/客服安抚」模板——也不要为了防模板阉割成人设以外的硬邦邦。';
+    ? '· 语气分寸看【性格】：人设温柔/软就按这个人的温柔说，不要为了「防 AI」把自己说硬。禁止的是空洞客服安抚与万能温和模板，不是温柔本身。'
+    : '· 语气分寸完全看【性格】【语言风格】：人设怎么写就怎么说。禁止的是「万能温和/客服安抚」模板；人设没有的腔调不要硬套。';
   const emotionVoiceLine = '· 对方情绪不好时：看见，用你这个人会有的反应接；禁止突然切成心理咨询/万能陪伴腔。';
+  // 训人腔（长本事了）：仅非 S/管教人设禁止；毒舌打趣≠管教爹味
+  const lectureVoiceLine = toneProfile.lecture
+    ? '· 人设带管教/支配/S 向：训人、压人、口吻按人设来即可（「长本事了」「胆子大了」这类可出现）。'
+    : '· 禁止滑成居高临下的训人/贬低腔（不是损友打趣，也不是 S 属性）：「长本事了」「胆子大了」「挺能耐」「谁给你的胆子」——像在管教对方。人设不是这种脾气就别套。';
   const voiceLock = (isDream || forGame || forDiaryPeek) ? '' : hasExamples
     ? `【口吻·人设优先·硬性】说话方式必须符合【性格】【行为模式】【语言风格】。
 · 【语言风格】里是短对话样本，不是可复用台词：禁止整句照搬、禁止同义微改、禁止当口头禅循环甩同一句。必须按当前对话重新组织。
@@ -4891,15 +4895,17 @@ ${selfAddrLock ? `· ${selfAddrLock}\n` : ''}${softVoiceLine}
 ${emotionVoiceLine}
 · 不满、抱怨、吃醋时也要像这个人：用他会用的说法（样本里有修辞就跟着，没有就别硬堆比喻），不要滑成和人设打架的通用吐槽腔。
 ${styleLooksLiterary
-    ? '· 若语感偏文雅/讲究措辞：抱怨时也别突然蹦「瞎折腾」「乱七八糟」「搞什么鬼」「作什么妖」这类粗口吐槽——用人设里会说的损法。'
-    : '· 口语可以损、可以冲，但要像这个人；不要换成谁都能说的网红吐槽模板。'}
-· 禁止滑成通用男友/网红腔（「长本事了」「可以啊你」「你完了」「什么鬼」「搞事情」）。
+    ? '· 若语感偏文雅/讲究措辞：抱怨时也别突然蹦「瞎折腾」「乱七八糟」「搞什么鬼」「作什么妖」这类粗口吐槽——只用这个人会说的说法。'
+    : '· 口语软硬跟【性格】走；不要换成谁都能说的网红吐槽模板。'}
+${lectureVoiceLine}
+· 也禁止滑成通用网红吐槽腔：「可以啊你」「你完了」「什么鬼」「搞事情」。
 · 拆气泡用句号；真震惊、急了用「！！！」「？？？」。`
     : `【口吻·硬性】说话方式必须符合【性格】【行为模式】【语言风格】。
 · 用词、态度、口癖按【语言风格】的感觉来。不要用通用情绪模板替换；情绪来了也还是这个人的说法。
 ${selfAddrLock ? `· ${selfAddrLock}\n` : ''}${softVoiceLine}
 ${emotionVoiceLine}
-· 禁止滑成通用男友/网红腔（「长本事了」「可以啊你」「你完了」「什么鬼」「搞事情」）。
+${lectureVoiceLine}
+· 也禁止滑成通用网红吐槽腔：「可以啊你」「你完了」「什么鬼」「搞事情」。
 · 拆气泡用句号；真震惊、急了用「！！！」「？？？」。`;
 
   const knowledgeLock = (!isDream && !forGame)
@@ -5023,7 +5029,7 @@ ${emotionVoiceLine}
     try { postOfficeBlock = require('./post-office-helper').promptBlockForChar(char.id) || ''; } catch {}
   }
 
-  // 分层：你是谁 → 怎么发消息 → 对谁/处在哪 → 记忆世界 → 内容边界 → 气泡写法 → 本轮 extra
+  // 分层：你是谁 → 记忆/日程/能力 → 口吻加固 → 心里话 → 用户预设（硬性压轴）
   const chatMediaOk = !isDream && !forGame && !forDiaryPeek && !forDiary && !forTheater && !forRobot && !forVoiceCall;
   const chatDirectiveOk = !isDream && !forGame && !forDiaryPeek && !forDiary && !forRobot && !forVoiceCall && !!opts.enableInlineDirectives;
 
@@ -5048,8 +5054,8 @@ ${emotionVoiceLine}
       (!isDream && charTraitStr) ? charTraitStr : '',
       (!isDream && nicknameStr) ? nicknameStr : '',
       worldbookContent ? `【世界书】\n${worldbookContent}` : '',
-      presetsBlock,
       extra,
+      presetsBlock,
     ].filter(Boolean).join('\n\n');
   }
 
@@ -5063,9 +5069,8 @@ ${emotionVoiceLine}
     postCallChatNote,
     robotHistoryNote,
     dreamStateBlock,
-    // 角色人设核心块前置，确保模型优先理解角色是谁
+    // 角色人设核心块前置：先立住「是谁」；口吻硬性挪到末尾加固，避免被能力说明冲淡
     charHeader,
-    voiceLock,
     knowledgeLock,
     isDream ? '' : worldLock,
     // 世界书靠近人设；记忆块靠前但不压过当前对话（对话在 messages 末尾）
@@ -5158,10 +5163,13 @@ ${emotionVoiceLine}
       ? buildCallDirectivePromptSection({ userAsked: opts.userAskedCall || userRequestsPhoneCall(opts.userMessage) })
       : ''),
     (chatMediaOk ? buildTheaterInvitePromptSection() : ''),
-    presetsBlock,
     meetupEchoNote,
     extra,
+    // 口吻靠近开口：能力/日程说明之后再钉一次「像这个人」
+    voiceLock,
     thinkAtEnd ? thinkAsSelf : '',
+    // 用户预设压轴：硬性覆盖上文一切冲突
+    presetsBlock,
   ].filter(Boolean).join('\n\n');
 }
 
