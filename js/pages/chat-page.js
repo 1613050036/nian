@@ -1682,6 +1682,46 @@ function ensureCallPipBound() {
   });
 }
 
+/** 通话听筒：把同轮 text/voice 收成一条再念（与气泡合并同一规则） */
+function coalesceCallSpeechFromMessages(aiMessages, fallback = {}) {
+  const parts = [];
+  for (const m of aiMessages || []) {
+    if (!m || isHiddenChatMessage(m)) continue;
+    if (m.type === 'voice' && String(m.content || '').trim().startsWith('{')) {
+      try {
+        if (JSON.parse(m.content)?.sfx) continue; // 音效另走
+      } catch { /* normal */ }
+    }
+    if ((m.type === 'text' || m.type === 'voice') && String(m.content || '').trim()
+      && !looksLikeWebCardPayload(m.content)) {
+      parts.push({
+        raw: String(m.content || '').trim(),
+        id: m.id,
+        emotion: String(m.tts_emotion || '').trim() || undefined,
+        tone: String(m.tts_tone || '').trim() || undefined,
+      });
+    }
+  }
+  if (!parts.length) {
+    const raw = String(fallback.autoReply || fallback.content || '').trim();
+    if (!raw || looksLikeWebCardPayload(raw)) return null;
+    return {
+      raw,
+      headId: fallback.aiMsgId ?? null,
+      ids: fallback.aiMsgId != null ? [fallback.aiMsgId] : [],
+      emotion: undefined,
+      tone: undefined,
+    };
+  }
+  return {
+    raw: parts.map((p) => p.raw).filter(Boolean).join('\n'),
+    headId: parts[0].id ?? null,
+    ids: parts.map((p) => p.id).filter((id) => id != null && id !== ''),
+    emotion: parts.find((p) => p.emotion)?.emotion,
+    tone: parts.find((p) => p.tone)?.tone,
+  };
+}
+
 async function playCallReplyAudio(result, forCharId) {
   if (!isInVoiceCallWith(forCharId) || !result) return;
   applyCallAmbienceField(result.callAmbience);
@@ -1692,39 +1732,40 @@ async function playCallReplyAudio(result, forCharId) {
     || (result.aiMessages || []).some((m) => String(m?.content || '').trim())
     || String(result?.content || '').trim()
   ));
-  const parts = [];
-  if (result.aiMessages?.length) {
-    for (const m of result.aiMessages) {
-      if ((m.type === 'text' || m.type === 'voice') && String(m.content || '').trim()
-        && !looksLikeWebCardPayload(m.content)) {
-        parts.push({
-          raw: m.content,
-          id: m.id,
-          emotion: String(m.tts_emotion || '').trim() || undefined,
-          tone: String(m.tts_tone || '').trim() || undefined,
-        });
-      }
+  // 音效 JSON 仍按条点一下
+  for (const m of result.aiMessages || []) {
+    if (m?.type === 'voice' && String(m.content || '').trim().startsWith('{')) {
+      try {
+        if (JSON.parse(m.content)?.sfx && !wasCallSpeechPlayed(m.id)) {
+          const payload = parseCallAudioPayload(m.content);
+          applyCallScenePayload(payload);
+          await playCallSpeechPayload(payload, forCharId, m.id, { armListen: false, skipScenePush: lensPushed });
+        }
+      } catch { /* ignore */ }
     }
-  } else if (result.autoReply) {
-    parts.push({ raw: result.autoReply, id: result.aiMsgId });
-  } else if (result.content) {
-    parts.push({ raw: result.content, id: result.aiMsgId });
   }
-  // WS 已在播 / 已占坑：HTTP「气泡在 DOM 但听筒没播」补播会砍断正在念的句子
-  const pending = parts.filter((p) => p.id == null || !wasCallSpeechPlayed(p.id));
-  if (!pending.length) {
+  const speech = coalesceCallSpeechFromMessages(result.aiMessages, result);
+  if (!speech?.raw) {
     await armCallLiveAfterSpeak();
     return;
   }
-  for (const part of parts) applyCallScenePayload(parseCallAudioPayload(part.raw));
-  for (const part of pending) {
-    await playCallSpeechPayload(parseCallAudioPayload(part.raw), forCharId, part.id, {
-      armListen: false,
-      emotion: part.emotion,
-      tone: part.tone,
-      skipScenePush: lensPushed,
-    });
+  applyCallScenePayload(parseCallAudioPayload(speech.raw));
+  const ids = speech.ids || [];
+  const allPlayed = ids.length > 0 && ids.every((id) => wasCallSpeechPlayed(id));
+  if (allPlayed) {
+    await armCallLiveAfterSpeak();
+    return;
   }
+  // 有的 id 已被短句占坑时仍合念整段（forceClaim），避免只剩最后一句出声
+  const anyPlayed = ids.some((id) => wasCallSpeechPlayed(id));
+  await playCallSpeechPayload(parseCallAudioPayload(speech.raw), forCharId, speech.headId, {
+    armListen: false,
+    emotion: speech.emotion,
+    tone: speech.tone,
+    skipScenePush: lensPushed,
+    relatedIds: ids,
+    forceClaim: anyPlayed && ids.length > 1,
+  });
   await armCallLiveAfterSpeak();
 }
 
@@ -5159,18 +5200,20 @@ async function persistCallTtsClip(msgId, blobUrl, transcript) {
 
 async function playCallTtsSegment(text, forCharId, {
   msgId, clipUrl, armListen = true, emotion, tone, soft, skipScenePush = false, relatedIds = null,
+  forceClaim = false,
 } = {}) {
   return withCallTtsGate(() => playCallTtsSegmentLocked(text, forCharId, {
-    msgId, clipUrl, armListen, emotion, tone, soft, skipScenePush, relatedIds,
+    msgId, clipUrl, armListen, emotion, tone, soft, skipScenePush, relatedIds, forceClaim,
   }));
 }
 
 async function playCallTtsSegmentLocked(text, forCharId, {
   msgId, clipUrl, armListen = true, emotion, tone, soft, skipScenePush = false, relatedIds = null,
+  forceClaim = false,
 } = {}) {
   if (!isInVoiceCallWith(forCharId)) return;
   // 开播前占坑：堵住 WS/HTTP 双通道抢播（否则原生打断被当成播完，只听到每个句首一个字）
-  if (!tryClaimCallSpeech(msgId, relatedIds)) {
+  if (!tryClaimCallSpeech(msgId, relatedIds, { force: forceClaim })) {
     if (armListen) await armCallLiveAfterSpeak();
     return;
   }
@@ -5709,7 +5752,7 @@ async function renderAiBubbles(segments, msgId, userTimestamp, msgType = 'text',
   }
 }
 
-async function appendAiBubble(msg, userTimestamp, forCharId = charId) {
+async function appendAiBubble(msg, userTimestamp, forCharId = charId, options = {}) {
   // 成图 WS 可能已到：用就绪 URL，避免 HTTP 快照里的 __pending_*__ 一直占着
   let hydrated = (msg?.type === 'image' || msg?.type === 'video')
     ? hydrateMediaMsgFromReadyCache(msg)
@@ -5760,11 +5803,16 @@ async function appendAiBubble(msg, userTimestamp, forCharId = charId) {
       } catch { wrap = null; }
       if (wrap && applyReadyMediaToBubble(wrap, hydrated)) scrollBottom(true);
     }
-    // 通话中：气泡可能被 sync 先画上但听筒没播
+    // 通话中：气泡可能被 sync 先画上但听筒没播；合段时 head 已占坑也要能念整段
     const msgType = hydrated.type || 'text';
+    const related = Array.isArray(hydrated.callSpeechIds) ? hydrated.callSpeechIds : [];
+    const claimIds = [hydrated.id, ...related].filter((id) => id != null && id !== '');
+    const allClaimed = claimIds.length > 0 && claimIds.every((id) => wasCallSpeechPlayed(id));
+    const partialClaimed = claimIds.some((id) => wasCallSpeechPlayed(id)) && !allClaimed;
     if (isInVoiceCallWith(forCharId) && content.trim() && (msgType === 'text' || msgType === 'voice')
       && !looksLikeWebCardPayload(content)
-      && !wasCallSpeechPlayed(hydrated.id)) {
+      && !allClaimed
+      && !options.skipCallTts) {
       const payload = parseCallAudioPayload(content);
       applyCallScenePayload(payload);
       let emo = String(hydrated.tts_emotion || '').trim();
@@ -5783,7 +5831,8 @@ async function appendAiBubble(msg, userTimestamp, forCharId = charId) {
         emotion: emo || undefined,
         tone: tone || undefined,
         skipScenePush: !!(inVideoCall && isCallVideoTextMode()),
-        relatedIds: hydrated.callSpeechIds || null,
+        relatedIds: related.length ? related : null,
+        forceClaim: partialClaimed && related.length > 1,
       });
     }
     return;
@@ -5837,29 +5886,37 @@ async function appendAiBubble(msg, userTimestamp, forCharId = charId) {
   }
 
   const msgType = hydrated.type || 'text';
-  if (isInVoiceCallWith(forCharId) && content.trim() && (msgType === 'text' || msgType === 'voice')
+  if (!options.skipCallTts
+    && isInVoiceCallWith(forCharId) && content.trim() && (msgType === 'text' || msgType === 'voice')
     && !looksLikeWebCardPayload(content)) {
-    const payload = parseCallAudioPayload(content);
-    applyCallScenePayload(payload);
-    let emo = String(hydrated.tts_emotion || '').trim();
-    let tone = String(hydrated.tts_tone || '').trim();
-    if ((!emo || !tone) && hydrated.media_meta) {
-      try {
-        const meta = typeof hydrated.media_meta === 'string'
-          ? JSON.parse(hydrated.media_meta)
-          : hydrated.media_meta;
-        if (!emo) emo = String(meta?.tts_emotion || '').trim();
-        if (!tone) tone = String(meta?.tts_tone || '').trim();
-      } catch { /* ignore */ }
+    const related = Array.isArray(hydrated.callSpeechIds) ? hydrated.callSpeechIds : [];
+    const claimIds = [hydrated.id, ...related].filter((id) => id != null && id !== '');
+    const allClaimed = claimIds.length > 0 && claimIds.every((id) => wasCallSpeechPlayed(id));
+    const partialClaimed = claimIds.some((id) => wasCallSpeechPlayed(id)) && !allClaimed;
+    if (!allClaimed) {
+      const payload = parseCallAudioPayload(content);
+      applyCallScenePayload(payload);
+      let emo = String(hydrated.tts_emotion || '').trim();
+      let tone = String(hydrated.tts_tone || '').trim();
+      if ((!emo || !tone) && hydrated.media_meta) {
+        try {
+          const meta = typeof hydrated.media_meta === 'string'
+            ? JSON.parse(hydrated.media_meta)
+            : hydrated.media_meta;
+          if (!emo) emo = String(meta?.tts_emotion || '').trim();
+          if (!tone) tone = String(meta?.tts_tone || '').trim();
+        } catch { /* ignore */ }
+      }
+      await playCallSpeechPayload(payload, forCharId, hydrated.id, {
+        armListen: false,
+        emotion: emo || undefined,
+        tone: tone || undefined,
+        // 场景条已由 applyCallLensFromResult 推过，这里只播声音
+        skipScenePush: !!(inVideoCall && isCallVideoTextMode()),
+        relatedIds: related.length ? related : null,
+        forceClaim: partialClaimed && related.length > 1,
+      });
     }
-    await playCallSpeechPayload(payload, forCharId, hydrated.id, {
-      armListen: false,
-      emotion: emo || undefined,
-      tone: tone || undefined,
-      // 场景条已由 applyCallLensFromResult 推过，这里只播声音
-      skipScenePush: !!(inVideoCall && isCallVideoTextMode()),
-      relatedIds: hydrated.callSpeechIds || null,
-    });
     if (holdBubbleForDial) paintBubble();
   } else if (holdBubbleForDial) {
     paintBubble();
@@ -5867,8 +5924,9 @@ async function appendAiBubble(msg, userTimestamp, forCharId = charId) {
 }
 
 async function renderAiMessageSequence(aiMessages, userTimestamp, forCharId = charId, options = {}) {
-  const { skipTyping = false, callMode = false } = options;
+  const { skipTyping = false, callMode = false, skipCallTts = false } = options;
   const noSplit = callMode || isInVoiceCallWith(forCharId);
+  const bubbleOpts = skipCallTts ? { skipCallTts: true } : {};
   if (!aiMessages?.length) return;
 
   if (noSplit && isInVoiceCallWith(forCharId)) {
@@ -5984,17 +6042,17 @@ async function renderAiMessageSequence(aiMessages, userTimestamp, forCharId = ch
     }
 
     if ((msg.type === 'text' || msg.type === 'voice') && looksLikeWebCardPayload(msg.content)) {
-      await appendAiBubble({ ...msg, type: 'web_card' }, i === 0 ? userTimestamp : null, forCharId);
+      await appendAiBubble({ ...msg, type: 'web_card' }, i === 0 ? userTimestamp : null, forCharId, bubbleOpts);
       markShown(msg, false);
     } else if (noSplit && (msg.type === 'text' || msg.type === 'voice')) {
-      await appendAiBubble(msg, i === 0 ? userTimestamp : null, forCharId);
+      await appendAiBubble(msg, i === 0 ? userTimestamp : null, forCharId, bubbleOpts);
       markShown(msg, false);
     } else if (msg.type === 'text' && looksLikeWebCardPayload(msg.content)) {
-      await appendAiBubble({ ...msg, type: 'web_card' }, i === 0 ? userTimestamp : null, forCharId);
+      await appendAiBubble({ ...msg, type: 'web_card' }, i === 0 ? userTimestamp : null, forCharId, bubbleOpts);
       markShown(msg, false);
     } else if (msg.type === 'text') {
       if (isCallLineMessage(msg)) {
-        await appendAiBubble(msg, i === 0 ? userTimestamp : null, forCharId);
+        await appendAiBubble(msg, i === 0 ? userTimestamp : null, forCharId, bubbleOpts);
         markShown(msg, false);
       } else {
         const segments = splitAiSegments(msg.content).filter((s) => String(s || '').trim());
@@ -6012,13 +6070,13 @@ async function renderAiMessageSequence(aiMessages, userTimestamp, forCharId = ch
             timestamp: msg.timestamp,
             replyPreview: j === 0 ? msg.replyPreview : '',
             recallAfterSend: isLast ? msg.recallAfterSend : false,
-          }, i === 0 && j === 0 ? userTimestamp : null, forCharId);
+          }, i === 0 && j === 0 ? userTimestamp : null, forCharId, bubbleOpts);
           markShown(segments[j], false);
         }
       }
     } else if (msg.type === 'voice') {
       if (isCallLineMessage(msg)) {
-        await appendAiBubble(msg, i === 0 ? userTimestamp : null, forCharId);
+        await appendAiBubble(msg, i === 0 ? userTimestamp : null, forCharId, bubbleOpts);
         markShown(msg, false);
       } else {
         const segments = voiceBubbleSegments(msg.content);
@@ -6038,19 +6096,19 @@ async function renderAiMessageSequence(aiMessages, userTimestamp, forCharId = ch
             replyPreview: j === 0 ? msg.replyPreview : '',
             recallAfterSend: isLast ? msg.recallAfterSend : false,
             media_meta: msg.media_meta,
-          }, i === 0 && j === 0 ? userTimestamp : null, forCharId);
+          }, i === 0 && j === 0 ? userTimestamp : null, forCharId, bubbleOpts);
           markShown(segments[j], false);
         }
       }
     } else if (msg.type === 'emoji' || msg.type === 'image' || msg.type === 'video' || msg.type === 'location' || msg.type === 'link' || msg.type === 'web_card') {
-      await appendAiBubble(msg, i === 0 ? userTimestamp : null, forCharId);
+      await appendAiBubble(msg, i === 0 ? userTimestamp : null, forCharId, bubbleOpts);
       markShown(msg, msg.type === 'emoji');
     } else {
-      await appendAiBubble(msg, i === 0 ? userTimestamp : null, forCharId);
+      await appendAiBubble(msg, i === 0 ? userTimestamp : null, forCharId, bubbleOpts);
       markShown(msg, false);
     }
   }
-  if (noSplit && isInVoiceCallWith(forCharId)) await armCallLiveAfterSpeak();
+  if (noSplit && isInVoiceCallWith(forCharId) && !skipCallTts) await armCallLiveAfterSpeak();
 }
 
 async function applyAiReplyResult(result, userTimestamp, forCharId = charId) {
@@ -6185,24 +6243,32 @@ async function applyAiReplyResult(result, userTimestamp, forCharId = charId) {
       const freshMsgs = filterUnrenderedAiMessages(result.aiMessages || []);
       const mainIdInDom = result.aiMsgId != null && isAiMsgInDom(result.aiMsgId);
 
-      if (freshMsgs.length) {
-        await renderAiMessageSequence(freshMsgs, userTimestamp, forCharId, { callMode });
+      // 通话：先合念整轮（勿用 freshMsgs 只剩最后一句），再画气泡且跳过二次 TTS
+      if (callMode && (result.aiMessages?.length || result.content || result.autoReply)) {
+        await playCallReplyAudio(result, forCharId);
+      }
+
+      if (freshMsgs.length || (callMode && result.aiMessages?.length)) {
+        const paintList = callMode && result.aiMessages?.length
+          ? result.aiMessages
+          : freshMsgs;
+        await renderAiMessageSequence(paintList, userTimestamp, forCharId, {
+          callMode,
+          skipCallTts: callMode,
+        });
         // 打字动画中途闸门抖动/中断时，把仍漏画的气泡补上
-        if (shouldRenderForChar(forCharId)) paintMissingMessagesToDom(freshMsgs);
+        if (shouldRenderForChar(forCharId)) paintMissingMessagesToDom(paintList);
       } else if (!mainIdInDom && result.content && !(result.aiMessages?.length)) {
         if (callMode && looksLikeWebCardPayload(result.content)) {
-          await appendAiBubble({ id: result.aiMsgId, type: 'web_card', content: result.content }, userTimestamp, forCharId);
+          await appendAiBubble({ id: result.aiMsgId, type: 'web_card', content: result.content }, userTimestamp, forCharId, { skipCallTts: true });
         } else if (callMode) {
-          await appendAiBubble({ id: result.aiMsgId, type: 'text', content: result.content }, userTimestamp, forCharId);
+          await appendAiBubble({ id: result.aiMsgId, type: 'text', content: result.content }, userTimestamp, forCharId, { skipCallTts: true });
         } else if (looksLikeWebCardPayload(result.content)) {
           await appendAiBubble({ id: result.aiMsgId, type: 'web_card', content: result.content }, userTimestamp, forCharId);
         } else {
           const segments = splitAiSegments(result.content);
           await renderAiBubbles(segments, result.aiMsgId, userTimestamp, 'text', forCharId);
         }
-      } else if (callMode && (result.aiMessages?.length || result.content)) {
-        // 气泡已被 WS/sync 先画上但听筒没播：补播一次
-        await playCallReplyAudio(result, forCharId);
       }
 
       if (!aiMessagesIncludeImages(freshMsgs) && !aiMessagesIncludeImages(result.aiMessages)) {
@@ -7445,8 +7511,11 @@ function wasCallSpeechPlayed(msgId) {
   return _playedCallSpeechIds.has(String(msgId));
 }
 
-/** 开播前占坑：任一相关 id 已占则放弃，避免 HTTP 补播打断正在念的合并气泡 */
-function tryClaimCallSpeech(msgId, relatedIds = []) {
+/**
+ * 开播前占坑：任一相关 id 已占则放弃，避免 HTTP 补播打断正在念的合并气泡。
+ * force：同轮短句已占过 head、现要合念整段时允许重占（解决只剩最后一句出声）。
+ */
+function tryClaimCallSpeech(msgId, relatedIds = [], { force = false } = {}) {
   const ids = [];
   const push = (id) => {
     if (id == null || id === '') return;
@@ -7457,7 +7526,7 @@ function tryClaimCallSpeech(msgId, relatedIds = []) {
   push(msgId);
   for (const id of relatedIds || []) push(id);
   if (!ids.length) return true;
-  if (ids.some((id) => _playedCallSpeechIds.has(id))) return false;
+  if (!force && ids.some((id) => _playedCallSpeechIds.has(id))) return false;
   for (const id of ids) markCallSpeechPlayed(id);
   return true;
 }
@@ -12060,11 +12129,16 @@ window.onProactiveMessage = async function(data) {
     rememberAiMsgIds(fresh.map(m => m.id));
     upsertThreadMessages(cid, isDream, fresh);
     playNotifySound();
-    // 与手动回复一致：逐条打字，后一条按上一条阅读停留再出
-    await renderAiMessageSequence(fresh, null, cid, { callMode: isInVoiceCallWith(cid) });
+    const inCall = isInVoiceCallWith(cid);
+    // 通话：整轮合念，勿用「未上屏」过滤后只剩最后一句
+    if (inCall) await playCallReplyAudio(data, cid);
+    await renderAiMessageSequence(inCall ? data.aiMessages : fresh, null, cid, {
+      callMode: inCall,
+      skipCallTts: inCall,
+    });
     // 动画中断或闸门抖动后，把仍未上屏的气泡一次性补上
     if (shouldRenderForChar(cid)) {
-      paintMissingMessagesToDom(fresh);
+      paintMissingMessagesToDom(inCall ? data.aiMessages : fresh);
       markVisibleUserMsgsRead(cid);
       api.markMessagesRead(cid, isDream ? 1 : 0).catch(() => {});
       markVisibleAiMsgsRead();
