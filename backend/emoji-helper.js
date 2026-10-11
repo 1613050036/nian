@@ -228,7 +228,7 @@ function stripThinkInstructionEcho(text) {
   // 标题行：【心里话】… / 【心里话·草稿】…
   t = t.replace(/【\s*心里话[^】]*】[^\n]*/g, '');
   // 旧/新说明句（可夹在段首，不只整行）
-  t = t.replace(/(?:^|\n)\s*(?:先写两行|用户看不见|再写正文|再另起开口|只写下面两行标记|不要抄本段说明|开口前先在心里过一遍|开口前先把四个标记|写完再开口|开口只接对方这轮|上面那些记忆、印象、日程|记忆、印象、日程是背景)[^\n]*/g, '\n');
+  t = t.replace(/(?:^|\n)\s*(?:先写两行|先连写四个标记|用户看不见|再写正文|再另起开口|只写下面两行标记|不要抄本段说明|开口前先在心里过一遍|开口前先把四个标记|写完再开口|开口只接对方这轮|上面那些记忆、印象、日程|记忆、印象、日程是背景|开口是这四步|开口\s*[=＝]\s*四步|不是偏重某一步|禁止把四个标记|想知道的已经进过心里了|多句只是把这一条拆成气泡|多句只是拆气泡|禁止抄本段)[^\n]*/g, '\n');
   t = t.replace(/(?:^|\n)\s*标记后面的正文\s*[=＝][^\n]*/g, '\n');
   t = t.replace(/(?:^|\n)\s*两行标记之后才是(?:日记正文|微信开口)[^\n]*/g, '\n');
   t = t.replace(/(?:^|\n)\s*禁止把本段任何(?:标题|说明|条目)[^\n]*/g, '\n');
@@ -239,6 +239,8 @@ function stripThinkInstructionEcho(text) {
   t = t.replace(/(?:^|\n)\s*标记里的判断禁止[^\n]*/g, '\n');
   t = t.replace(/(?:^|\n)\s*看法只用【心智】[^\n]*/g, '\n');
   t = t.replace(/(?:^|\n)\s*还没有心智时按【性格】[^\n]*/g, '\n');
+  // 系统【】规则块标题行被整段复读时剥掉（沉浸/能力/人称等）
+  t = t.replace(/【\s*(?:沉浸指令|能力|人称(?:·硬性)?|时间感知|对方在干嘛(?:·硬性)?|语言风格|当前通道(?:·硬性)?|格式)\s*】[^\n]*/g, '');
   // 空壳模板：内容只有省略号/空白
   t = t.replace(
     new RegExp(`[\\[【［]\\s*(?:${MIND_PRIVATE_TAG})\\s*[\\]】］]\\s*[.…。．\\s]*[\\[【［]\\s*\\/\\s*(?:${MIND_PRIVATE_TAG})\\s*[\\]】］]`, 'gi'),
@@ -718,7 +720,7 @@ function stripResidualDirectiveTags(text, opts = {}) {
   // 内容是自然语言，模型有时会整段复读，导致「状态词夹在角色正常输出里看着像乱码」。
   // 剥离策略：从标记出现处开始，剥到下一个空行 / 文末 / 最多 6 行（这些块一般 1-4 行）。
   t = (() => {
-    const re = /【\s*(?:睡眠情境|时间推进|重新回复|先前打算|时间事实|收尾)[·・.:：]?[^】\n]*】|<SYS_(?:SLEEP|INTENT|RETRY|TIMEADVANCE|REST_ELAPSED|PLAN_ELAPSED|NIGHT_WAKE|GOODNIGHT_RE|SLEEPY_RE|LATE_CHAT|ABSENCE)_[A-Z0-9_]*>/g;
+    const re = /【\s*(?:睡眠情境|时间推进|重新回复|先前打算|时间事实|收尾|沉浸指令|能力|人称|时间感知|对方在干嘛|语言风格|当前通道|格式|心里话)[·・.:：]?[^】\n]*】|<SYS_(?:SLEEP|INTENT|RETRY|TIMEADVANCE|REST_ELAPSED|PLAN_ELAPSED|NIGHT_WAKE|GOODNIGHT_RE|SLEEPY_RE|LATE_CHAT|ABSENCE)_[A-Z0-9_]*>/g;
     let out = '';
     let last = 0;
     let m;

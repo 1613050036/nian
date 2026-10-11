@@ -464,7 +464,7 @@ function splitIntoSentenceGroups(text, keepPeriod = false) {
 /** 去掉 AI 从历史里学来的 [文字]/[语音] 标记；并剥心里话草稿标记、通道标签抄写 */
 export function stripAiContextLabels(text) {
   if (!text) return '';
-  const mindTag = '在聊什么|T[Aa]为什么(?:说这个|这么说|说这些)|我怎么想|想知道的|怎么看这件事|怎么想这件事|决定做什么|决定不说什么|决定怎么说|怎么看|什么感觉|怎么想|没说出口|怎么做';
+  const mindTag = '在聊什么|T[Aa]为什么(?:说这个|这么说|说这些)|我怎么想|想知道的|怎么看这件事|怎么想这件事|决定做什么|决定不说什么|决定怎么说|怎么看|什么感觉|怎么想|没说出口|怎么做|这一拍心思|动手|提不提';
   return String(text)
     .replace(/\r\n/g, '\n')
     .replace(new RegExp(`[\\[【［]\\s*(?:${mindTag})\\s*[\\]】］][\\s\\S]*?[\\[【［]\\s*\\/\\s*(?:${mindTag})\\s*[\\]】］]`, 'gi'), '')
@@ -472,6 +472,8 @@ export function stripAiContextLabels(text) {
     .replace(new RegExp(`[\\[【［]\\s*(?:${mindTag})\\s*[\\]】］][^\\n\\[【［]*`, 'gi'), '')
     .replace(new RegExp(`[\\[【［]\\s*\\/\\s*(?:${mindTag})\\s*[\\]】］]`, 'gi'), '')
     .replace(new RegExp(`(?:^|\\n)\\s*(?:我)?(?:${mindTag})\\s*[:：][^\\n]*`, 'gi'), '\n')
+    // 系统规则块标题被抄进气泡时剥掉
+    .replace(/【\s*(?:心里话[^】]*|沉浸指令|能力|人称(?:·硬性)?|时间感知|对方在干嘛(?:·硬性)?|语言风格|当前通道(?:·硬性)?|格式)\s*】[^\n]*/g, '')
     // 历史通道标签抄写（与挂断一样，用户看不见）
     .replace(/[\[【［]\s*通话\s*[\]】］]\s*(?:你说|对方说|我说)?\s*[:：]?\s*/g, '')
     .replace(/[\[【［]\s*文字\s*[\]】］]\s*(?:你说|对方说|我说)?\s*[:：]?\s*/g, '')
