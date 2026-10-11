@@ -46,6 +46,7 @@ const NAG_COOLDOWN_DAYS = 30;
 const OFFER_CHANCE = 1 / 3;
 const BAD_HABIT_CHANCE = 0.5;
 const KNOW_MAX = 6;
+const RECENT_KNOW_MAX = 3;
 const KEY_RULES = `每条都要带：
 - triggers 联想词：对方说到哪些词时，你会想起这条。2～6 个短词，要想到生活里的联想，不只是原句里的字。例如「头发老吹半干」→ 洗澡、洗头、吹头发、睡前、头疼。
 - marks 标记词：你真的提起这条时，话里一定会出现的词。1～4 个。例如「头发老吹半干」→ 吹干、半干、头发。
@@ -1125,8 +1126,9 @@ function formatForPrompt(charId, userText = '') {
   const text = String(userText || '').trim();
   try { settleMentions(cid, text); } catch (e) { console.warn('[user-read] settle', e.message); }
   const allUserRows = listReads(cid, 'user');
-  const standingRecent = formatRecentStanding(allUserRows);
-  if (!text) return standingRecent;
+  const recentRows = allUserRows.filter((r) => r.section === 'recent');
+  // 有话时近况按勾起注入（不再常驻）；无话（主动找人）仍可带全量近况
+  if (!text) return formatRecentStanding(recentRows);
   const userRows = allUserRows.filter((r) => r.section !== 'recent');
   let moodText = '';
   try { moodText = updateUserMood(cid, text, allUserRows); } catch (e) { console.warn('[user-read] mood', e.message); }
@@ -1138,7 +1140,7 @@ function formatForPrompt(charId, userText = '') {
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s || b.r.id - a.r.id)
     .map((x) => x.r);
-  // 近况常驻；本人事实仍按这轮话勾起
+  const standingRecent = formatRecentStanding(rank(recentRows).slice(0, RECENT_KNOW_MAX));
   const userHits = rank(userRows);
 
   let offer = null;

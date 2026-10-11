@@ -1417,7 +1417,7 @@ function scheduleChatImageDelivery(job) {
   });
 }
 
-async function attachReplyImages({ characterId, char, settings, rawText, cleanText, reqBase, isDreamMode, imageQuery: imageQueryOverride, videoQuery: videoQueryOverride, userImageRequest = false, userVideoRequest = false, userMessage = '' }) {
+async function attachReplyImages({ characterId, char, settings, rawText, cleanText, reqBase, isDreamMode, imageQuery: imageQueryOverride, videoQuery: videoQueryOverride, userImageRequest = false, userVideoRequest = false, userMessage = '', currentUserMessage = '' }) {
   let selfieImgId = null;
   let selfieImgUrl = null;
   let generalImgId = null;
@@ -1496,28 +1496,27 @@ async function attachReplyImages({ characterId, char, settings, rawText, cleanTe
     videoPresetQuery = undefined;
   }
   let wantsGeneral = shouldAttachContextImage(intent.combined, presetQuery, { hasExplicitSelfie, forChat: true });
-  const userWantsSelfie = detectUserSelfieRequest(userMessage);
+  // 要不要强制补图：只看本轮用户话，不用历史硬请求（避免隔几句还乱补）
+  const askText = String(currentUserMessage || '').trim();
+  const userWantsSelfie = detectUserSelfieRequest(askText);
+  const hardAskThisTurn = !!userImageRequest || detectUserImageRequest(askText);
   const refusedShare = replyRefusesShareMedia(intent.combined);
-  // 用户硬要自拍但模型没写指令：走自拍占位，不要用风景配图顶替
+  // 本轮硬要图 + 嘴上完成态才补自拍；禁止「只要用户要过图 / 正文出现自拍」就发
   let forceSelfie = false;
-  if (!hasExplicitSelfie && userWantsSelfie && !refusedShare && !replyAsksUserForImage(intent.combined)
-    && (replySuggestsShareImage(intent.combined)
-      || replyClaimsSentShareMedia(intent.combined)
-      || /拍好了|发你了|发给你了|自拍/.test(intent.combined)
-      // 硬请求：对方答应/接话即可补图，不必非要写「拍好了」
-      || userImageRequest)) {
+  if (!hasExplicitSelfie && hardAskThisTurn && (userWantsSelfie || userImageRequest)
+    && !refusedShare && !replyAsksUserForImage(intent.combined)
+    && (claimedSent || /拍好了|发你了|发给你了|画好了|画完了/.test(intent.combined))) {
     forceSelfie = true;
   }
-  // 用户硬要风景/静物图：有主题就配图；没主题且非自拍请求时也走自拍，避免空手
-  // 画画/插画：绝不能默认成自拍或实拍风景
-  const drawAsk = detectDrawingMediaIntent({ userMessage });
-  if (!wantsGeneral && userImageRequest && !hasExplicitSelfie && !forceSelfie
+  // 用户硬要风景/静物图：有主题就配图；画画/插画绝不能默认成自拍
+  const drawAsk = detectDrawingMediaIntent({ userMessage: askText || userMessage });
+  if (!wantsGeneral && hardAskThisTurn && !hasExplicitSelfie && !forceSelfie
     && !refusedShare && !replyAsksUserForImage(intent.combined)) {
     if (presetQuery === undefined) {
       if (drawAsk) {
-        const rawSub = extractImageQueryFromText(userMessage)
+        const rawSub = extractImageQueryFromText(askText || userMessage)
           || extractImageQueryFromText(intent.combined)
-          || String(userMessage || '').replace(/^(?:帮我|给我|替我|来|再)?画(?:张|个|一幅|一副)?(?:图|画|插画|素描)?/g, '').trim().slice(0, 80);
+          || String(askText || userMessage || '').replace(/^(?:帮我|给我|替我|来|再)?画(?:张|个|一幅|一副)?(?:图|画|插画|素描)?/g, '').trim().slice(0, 80);
         const sub = rawSub || (drawAsk === 'doodle' ? 'a simple everyday object' : 'a charming scene');
         presetQuery = drawAsk === 'doodle'
           ? `simple doodle of ${sub}`
@@ -1525,13 +1524,14 @@ async function attachReplyImages({ characterId, char, settings, rawText, cleanTe
         wantsGeneral = true;
         console.log('[chat image] 画画硬请求补配图', drawAsk, String(presetQuery).slice(0, 80));
       } else {
-        const q = extractImageQueryFromText(userMessage)
+        const q = extractImageQueryFromText(askText || userMessage)
           || extractImageQueryFromText(intent.combined);
         if (q) {
+          // 本轮硬要且点了主题 → 补配图（不必再等「发你了」）
           presetQuery = q;
           wantsGeneral = true;
-        } else if (!userWantsSelfie) {
-          // 「发张图」未指明主题 → 默认自拍，比空风景更合理
+        } else if (!userWantsSelfie && claimedSent) {
+          // 「发张图」未指明主题但声称已发 → 默认自拍
           forceSelfie = true;
         }
       }
@@ -1552,12 +1552,12 @@ async function attachReplyImages({ characterId, char, settings, rawText, cleanTe
   // 嘴上说「发过去了/赶紧看/看完评价」但没写指令：按内容补发，默认自拍
   const claimedFill = resolveClaimedMissingShare({
     combined: intent.combined,
-    userMessage,
+    userMessage: askText || userMessage,
     hasExplicitSelfie: effectiveHasExplicitSelfie,
     wantsGeneral,
     wantsVideo,
-    userWantsSelfie,
-    userImageRequest,
+    userWantsSelfie: hardAskThisTurn && userWantsSelfie,
+    userImageRequest: hardAskThisTurn && userImageRequest,
   });
   if (claimedFill?.kind === 'selfie') {
     forceSelfie = true;
@@ -4690,6 +4690,7 @@ app.post('/api/messages/send', async (req, res) => {
       userImageRequest,
       userVideoRequest,
       userMessage: getUserImageRequestText(history, content) || getUserVideoRequestText(history, content),
+      currentUserMessage: content,
     });
     appendImageMessages(aiMessages, imgs);
 
@@ -5666,6 +5667,7 @@ app.post('/api/messages/trigger-ai', async (req, res) => {
       userImageRequest,
       userVideoRequest,
       userMessage: getUserImageRequestText(history, lastUserMsg?.content) || getUserVideoRequestText(history, lastUserMsg?.content),
+      currentUserMessage: lastUserMsg?.content || '',
     });
     appendImageMessages(aiMessages, imgs);
 

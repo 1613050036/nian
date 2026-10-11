@@ -7340,10 +7340,7 @@ function replyClaimsSentShareMedia(text) {
   }
   if (/发(?:过来|过去|给你)(?:看看|瞧瞧|一下)?/.test(t) && (visual || /看/.test(t)) && !/[？?]/.test(t)) return true;
 
-  if (/(赶紧|快)看(啊|呀|嘛|吧|啦|咯|一眼|下)?[!！.。~～…]*$/.test(compact) && compact.length <= 12) return true;
-  if (/看完.{0,8}(评|说|告诉|觉得|感觉)/.test(t)) return true;
-  if (/(赶紧|快)看/.test(t) && visual) return true;
-  if (/(评价一下|给个评价|这张怎么样)/.test(t) && (visual || compact.length <= 20)) return true;
+  // 「赶紧看 / 评价一下」太泛，单独不算已发出（避免闲聊乱补图）
   return false;
 }
 
@@ -7386,11 +7383,9 @@ function resolveClaimedMissingShare({
 } = {}) {
   if (hasExplicitSelfie || wantsGeneral || wantsVideo) return null;
   const blob = String(combined || '');
-  // 用户本轮硬要图时，才叠一层更松的口语（看好了/喏）；平时只认完成态声称
+  // 只认完成态「发你了/拍好了」；本轮硬要图时才加「看好了/喏」一档，不再用更宽的 suggest
   const claimed = replyClaimsSentShareMedia(blob)
-    || ((userWantsSelfie || userImageRequest) && (
-      replySuggestsShareImage(blob) || replyLooselyClaimsSentMedia(blob)
-    ));
+    || ((userWantsSelfie || userImageRequest) && replyLooselyClaimsSentMedia(blob));
   if (!claimed) return null;
 
   const inferred = inferShareIntentFromReply(blob);
