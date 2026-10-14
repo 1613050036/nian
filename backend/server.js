@@ -23,7 +23,7 @@ const {
   listSecretNotes, insertSecretNote, generateSecretNotesForDay, noteAtNow, SECRET_SECTIONS, ALL_SECTIONS,
 } = require('./secret-helper');
 const sharedMemo = require('./shared-memo-helper');
-const { callChatAPI, callChatAPIComplete, completeChatTurn, callTTS, generateImage, getLastGenerateImageError, getLastGenerateImageMeta, resolveImg2ImgConfig, resolveImg2VideoConfig, routeSettingsForMediaGen, inferChatMediaNsfwContext, normalizeSelfieAspect, normalizeVideoAspect, inferChatMediaAspect, normalizeImageRefGroups, selectSelfieReferenceUrls, resolveSelfieRefFlags, selectVideoReferenceUrl, selectHomeReferenceUrls, normalizeHomeRefs, homeRefsToJson, isObjectOrStillLifeScene, is80AiImageApi, fetch80AiImageModels, fetch80AiImageModelOptions, MINIMAX_SPEECH_MODELS, IMAGEN_MODELS, listKnownImageModels, listKnownImg2VideoModels, fetchImg2ImgModelsFromApi, fetchImg2VideoModelsFromApi, fetchUnsplashImage, generateChatContextImage, generateChatContextVideo, generateImageToVideo, getLastGenerateVideoError, fetchPexelsVideo, fetchPexelsVideoForChat, parseMomentContentAndImageQuery, extractImageQueryFromText, extractSelfieSceneQuery, buildSelfieGenerationPrompt, resolveCharacterHomeEnvironment, shouldAttachContextImage, shouldAttachContextVideo, replySuggestsShareImage, replySuggestsShareVideo, replyClaimsSentShareMedia, resolveClaimedMissingShare, replyAsksUserForImage, replyAsksUserForVideo, isHardUserImageAsk, isHardUserSelfieAsk, replyRefusesShareMedia, detectDrawingMediaIntent, normalizeMediaDirectiveLines, stripImageDirectiveFromSegments, buildHistoryApiMessages, detectAvatarChangeIntent, replyAcceptsAvatarChange, stripAvatarChangeMarker, buildAvatarChangeChoiceHint, toAbsoluteMediaUrl, formatApiBillingError, fetchApiBalance, fetchWithTimeout, describeUserAppearance, describeCallWatchScene } = require('./api-helper');
+const { callChatAPI, callChatAPIComplete, completeChatTurn, callTTS, generateImage, getLastGenerateImageError, getLastGenerateImageMeta, resolveImg2ImgConfig, resolveImg2VideoConfig, routeSettingsForMediaGen, inferChatMediaNsfwContext, normalizeSelfieAspect, normalizeVideoAspect, inferChatMediaAspect, normalizeImageRefGroups, selectSelfieReferenceUrls, resolveSelfieRefFlags, selectVideoReferenceUrl, selectHomeReferenceUrls, normalizeHomeRefs, homeRefsToJson, isObjectOrStillLifeScene, is80AiImageApi, fetch80AiImageModels, fetch80AiImageModelOptions, MINIMAX_SPEECH_MODELS, IMAGEN_MODELS, listKnownImageModels, listKnownImg2VideoModels, fetchImg2ImgModelsFromApi, fetchImg2VideoModelsFromApi, fetchUnsplashImage, generateChatContextImage, generateChatContextVideo, generateImageToVideo, getLastGenerateVideoError, fetchPexelsVideo, fetchPexelsVideoForChat, parseMomentContentAndImageQuery, extractImageQueryFromText, extractSelfieSceneQuery, buildSelfieGenerationPrompt, resolveCharacterHomeEnvironment, shouldAttachContextImage, shouldAttachContextVideo, replySuggestsShareImage, replySuggestsShareVideo, replyClaimsSentShareMedia, replyLooselyClaimsSentMedia, resolveClaimedMissingShare, replyAsksUserForImage, replyAsksUserForVideo, isHardUserImageAsk, isHardUserSelfieAsk, replyRefusesShareMedia, detectDrawingMediaIntent, normalizeMediaDirectiveLines, stripImageDirectiveFromSegments, buildHistoryApiMessages, detectAvatarChangeIntent, replyAcceptsAvatarChange, stripAvatarChangeMarker, buildAvatarChangeChoiceHint, toAbsoluteMediaUrl, formatApiBillingError, fetchApiBalance, fetchWithTimeout, describeUserAppearance, describeCallWatchScene } = require('./api-helper');
 const { processAiContentWithEmojis, saveAiReplySegments, stripAiContextLabels, stripModelLeakage, splitAiSegments, userRequestsVoiceMessage, userRequestsPhoneCall, resolveChatIncomingCall, insertCharacterPokeMessage, polishSpokenAiText, dedupeContinuationPiece, decorateEmojiRecord, resolveLiveEmojiUrl, healMissingEmojiFiles, mergeReplacementEmoji, invalidateEmojiLiveCache, emojiBasename, looksLikeStandaloneHtml, looksLikeWebCardPayload } = require('./emoji-helper');
 const robotHelper = require('./robot-helper');
 const robotVision = require('./robot-vision-helper');
@@ -935,9 +935,9 @@ function appendMediaRequestHints(extraSystemPrompt, history, currentContent) {
     const drawMode = detectDrawingMediaIntent({ userMessage: currentContent });
     let hint;
     if (drawMode === 'doodle') {
-      hint = '[用户要你画简笔画/你画我猜。若你决定画：正文可说「画好了」，末尾另起一行写「配图：simple doodle of 英文主题」（故意画得简单糊一点方便猜）。禁止写成手机实拍风景或自拍。不画则写「配图：无」。]';
+      hint = '[用户要你玩你画我猜。若你决定画：正文可说「画好了」，末尾另起一行写「配图：pictionary doodle of 英文主题」（故意画得简单糊一点方便猜）。禁止写成手机实拍风景或自拍。不画则写「配图：无」。]';
     } else if (drawMode === 'illustration') {
-      hint = '[用户要你画画/插画。若你决定画：正文可说「画好了」，末尾另起一行写「配图：illustration of 英文画面」（插画/手绘，可画角色、动物、场景）。禁止写成手机实拍风景照片，也不要用「自拍：」顶替。不画则写「配图：无」。]';
+      hint = '[用户要你画画。若你决定画：正文可说「画好了」，末尾另起一行写「配图：illustration of 英文画面, 画材」（手绘，可画角色、动物、场景）。画材按对方说的（简笔画 simple doodle / 速写 pencil sketch / 油画 oil painting / 水彩 watercolor 等）；没说就按你手边随手画的选，如 ballpoint pen sketch。禁止写成手机实拍风景照片，也不要用「自拍：」顶替。不画则写「配图：无」。]';
     } else {
       hint = selfieReq
         ? '[用户要看你本人/自拍。若你决定发：正文可自然说「拍好了」，末尾必须另起一行写「自拍：英文场景描述」（地点+穿着+拍法+表情）。禁止只说发了却不写指令；禁止用「配图：」发风景/静物顶替本人出镜。本轮不发则写「自拍：无」。]'
@@ -1509,20 +1509,26 @@ async function attachReplyImages({ characterId, char, settings, rawText, cleanTe
     forceSelfie = true;
   }
   // 用户硬要风景/静物图：有主题就配图；画画/插画绝不能默认成自拍
-  const drawAsk = detectDrawingMediaIntent({ userMessage: askText || userMessage });
+  const drawAsk = detectDrawingMediaIntent({ userMessage: askText });
+  const replyDeliveredDrawing = claimedSent || replyLooselyClaimsSentMedia(intent.combined);
   if (!wantsGeneral && hardAskThisTurn && !hasExplicitSelfie && !forceSelfie
     && !refusedShare && !replyAsksUserForImage(intent.combined)) {
     if (presetQuery === undefined) {
+      // 画画：角色只是答应「等我画」时不补图，要说了画好了/发你了才补
       if (drawAsk) {
-        const rawSub = extractImageQueryFromText(askText || userMessage)
-          || extractImageQueryFromText(intent.combined)
-          || String(askText || userMessage || '').replace(/^(?:帮我|给我|替我|来|再)?画(?:张|个|一幅|一副)?(?:图|画|插画|素描)?/g, '').trim().slice(0, 80);
-        const sub = rawSub || (drawAsk === 'doodle' ? 'a simple everyday object' : 'a charming scene');
-        presetQuery = drawAsk === 'doodle'
-          ? `simple doodle of ${sub}`
-          : `illustration of ${sub}`;
-        wantsGeneral = true;
-        console.log('[chat image] 画画硬请求补配图', drawAsk, String(presetQuery).slice(0, 80));
+        if (!replyDeliveredDrawing) {
+          console.log('[chat image] 画画请求但正文未声称画好，本轮不补图');
+        } else {
+          const rawSub = extractImageQueryFromText(askText)
+            || extractImageQueryFromText(intent.combined)
+            || String(askText || '').replace(/^(?:帮我|给我|替我|来|再)?画(?:张|个|一幅|一副)?(?:图|画|插画|素描)?/g, '').trim().slice(0, 80);
+          const sub = rawSub || (drawAsk === 'doodle' ? 'a simple everyday object' : 'a charming scene');
+          presetQuery = drawAsk === 'doodle'
+            ? `pictionary doodle of ${sub}`
+            : `illustration of ${sub}`;
+          wantsGeneral = true;
+          console.log('[chat image] 画画硬请求补配图', drawAsk, String(presetQuery).slice(0, 80));
+        }
       } else {
         const q = extractImageQueryFromText(askText || userMessage)
           || extractImageQueryFromText(intent.combined);
@@ -1777,18 +1783,19 @@ async function attachReplyImages({ characterId, char, settings, rawText, cleanTe
 
   // 分享风景/美食/细节等 → 占位气泡，后台生图（勿同步等待，否则前端易 abort）
   if (wantsGeneral) {
+    // 只用本轮用户话：历史里旧的「画一张」不能把之后的随手拍都变成插画
     const contentForImage = [
       typeof presetQuery === 'string' ? presetQuery : '',
-      userMessage,
+      askText,
       intent.parsed.content,
       intent.parsedRaw.content,
       cleanText,
       rawText,
     ].filter(Boolean).join('\n');
     const drawMode = detectDrawingMediaIntent({
-      userMessage,
+      userMessage: askText,
       query: typeof presetQuery === 'string' ? presetQuery : '',
-      caption: contentForImage,
+      caption: [intent.parsed.content, intent.parsedRaw.content, cleanText, rawText].filter(Boolean).join('\n'),
     });
     const imageAspect = drawMode
       ? '1:1'
@@ -1829,7 +1836,7 @@ async function attachReplyImages({ characterId, char, settings, rawText, cleanTe
           presetQuery: typeof presetQuery === 'string' ? presetQuery : '',
           contentForImage: String(contentForImage || '').slice(0, 500),
           aspect: imageAspect,
-          drawMode: drawMode || '',
+          drawMode: drawMode || 'photo',
           nsfw: resolveMediaNsfw(typeof presetQuery === 'string' ? presetQuery : ''),
         }), generalImgId);
       } catch (e) {
@@ -1845,8 +1852,8 @@ async function attachReplyImages({ characterId, char, settings, rawText, cleanTe
         presetQuery: typeof presetQuery === 'string' ? presetQuery : null,
         placeholderMsgId: generalImgId,
         aspect: imageAspect,
-        drawMode: drawMode || null,
-        userMessage: String(userMessage || ''),
+        drawMode: drawMode || 'photo',
+        userMessage: askText,
         charName: char.name || '',
         nsfw: resolveMediaNsfw(typeof presetQuery === 'string' ? presetQuery : ''),
       };
@@ -6007,7 +6014,7 @@ app.post('/api/messages/:id/reroll-media', async (req, res) => {
             char,
             meta.contentForImage || meta.presetQuery || 'scene photo',
             meta.presetQuery || null,
-            { aspect, nsfw: !!meta.nsfw }
+            { aspect, nsfw: !!meta.nsfw, drawMode: meta.drawMode || 'photo' }
           );
         } catch (e) {
           console.error('[reroll-media/image]', e.message);

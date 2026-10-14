@@ -4281,31 +4281,33 @@ const CHAT_CONTEXT_NO_FACE_HINT = [
  * 画画 / 插画 / 你画我猜：不要走「手机实拍风景」那条。
  * 返回 'doodle' | 'illustration' | null
  */
+// 「画面/动画/漫画」等名词里的「画」不算要画；必须是「(你/给我)画一张」「画个」这类动作
+const DRAW_ASK_RE = /(?:帮我|给我|替我|为我|你|再|来|去)画(?:一|张|个|幅|副|只|下|点|画)|(?<![动漫油壁版国字书名插原图影计])画(?:一)?(?:张|个|幅|副|只)|画(?:画)?给我|(?:画|来|发|要|整|弄)(?:一)?(?:张|个|幅)?(?:插画|手绘|素描|简笔画|涂鸦)|\bdraw\s+(?:me|a|an|something)\b/i;
+// 角色正文：只认「画好了 / 我画的」这类完成态，不认正文里随口出现的「画」
+const DRAW_DONE_RE = /画好[了啦咯]|画完[了啦咯]|(?:给你|帮你|我)画了|画了(?:一)?(?:张|个|幅|副|只)|(?:我|自己)(?:随手)?画的|手绘(?:了|的)/;
+// doodle 模式专给你画我猜（故意画糊）；普通简笔画走 illustration + 画材
+const DOODLE_HINT_RE = /你画我猜|猜词画画|pictionary|guessing[- ]?game/i;
+
 function detectDrawingMediaIntent({ userMessage = '', query = '', caption = '' } = {}) {
   const q = String(query || '');
-  const blob = `${userMessage}\n${q}\n${caption}`;
-  if (!blob.trim()) return null;
+  const u = String(userMessage || '');
+  const c = String(caption || '');
+  if (!`${u}${q}${c}`.trim()) return null;
 
   // 配图行里已写明画风
-  if (/\b(doodle|pictionary|crayon|stick[- ]?figure|guessing[- ]?game)\b/i.test(q)
-    || /简笔画|涂鸦|你画我猜|蜡笔|儿童画/.test(q)) {
+  if (/\b(pictionary|guessing[- ]?game)\b/i.test(q) || /你画我猜/.test(q)) {
     return 'doodle';
   }
-  if (/\b(illustration|sketch|drawing|lineart|anime\s*art|concept\s*art|fanart)\b/i.test(q)
-    || /插画|漫画|素描|手绘|二次元画/.test(q)) {
+  if (/\b(illustration|sketch|drawing|doodle|painting|watercolou?r|crayon|stick[- ]?figure|lineart|fanart)\b/i.test(q)
+    || /插画|漫画|素描|速写|手绘|简笔画|涂鸦|油画|水彩|水墨|彩铅|蜡笔|马克笔|二次元画/.test(q)) {
     return 'illustration';
   }
 
-  // 用户话 / 正文：你画我猜、简笔画优先 doodle
-  if (/你画我猜|猜词画画|简笔画|涂鸦|蜡笔画|儿童画|stick\s*figure|pictionary/i.test(blob)) {
-    return 'doodle';
-  }
-  // 「画一张/画个/给我画/插画」→ 插画（不是实拍）
-  if (/(?:帮我|给我|替我|来|再)?画(?:张|个|一幅|一副|一画)?(?:图|画|插画|素描)?|画张|画个|画幅|插画|手绘一张|素描一张|comic|illustration/i.test(blob)
-    && !/(?:拍|拍照|照片|自拍|实拍|摄影)/.test(blob)) {
-    return 'illustration';
-  }
-  return null;
+  if (/你画我猜|猜词画画|pictionary/i.test(u)) return 'doodle';
+  const userAsks = DRAW_ASK_RE.test(u) && !/(?:拍照|照片|自拍|实拍|摄影|拍(?:一)?张)/.test(u);
+  const replyDrew = DRAW_DONE_RE.test(c);
+  if (!userAsks && !replyDrew) return null;
+  return DOODLE_HINT_RE.test(`${u}\n${c}`) ? 'doodle' : 'illustration';
 }
 
 function isDrawingMediaAsk(text) {
@@ -5049,6 +5051,32 @@ async function fetchUnsplashImageForChat(settings, contentText, presetQuery = nu
   return fetchUnsplashImageForMoment(settings, contentText, presetQuery);
 }
 
+// 顺序有意义：彩铅要排在铅笔前，漫画/简笔画排在速写前
+const HAND_DRAWN_MEDIUMS = [
+  { re: /油画|oil\s*paint/i, desc: 'oil painting on canvas, thick visible brushstrokes, uneven impasto, colors mixed directly on the canvas' },
+  { re: /水彩|watercolou?r/i, desc: 'loose watercolor on textured paper, pigment blooms and bleeding edges, uneven washes, faint pencil underdrawing showing' },
+  { re: /水墨|国画|毛笔|ink\s*wash/i, desc: 'Chinese ink wash painting on rice paper, brush strokes with dry-brush texture, ink bleeding into the paper, lots of empty space' },
+  { re: /彩铅|colou?red\s*pencil/i, desc: 'colored pencil drawing in a sketchbook, visible hatching strokes, paper grain showing through, uneven coloring' },
+  { re: /蜡笔|油画棒|儿童画|crayon|oil\s*pastel/i, desc: 'crayon and oil pastel drawing, waxy strokes, coloring outside the lines, childlike' },
+  { re: /马克笔|marker/i, desc: 'marker sketch on paper, streaky marker strokes, overlapping layers, slight bleed at the edges' },
+  { re: /漫画|Q版|chibi|manga|comic/i, desc: 'hand-inked manga-style sketch with a pen, uneven line weight, rough hatching, a little messy' },
+  { re: /简笔画|涂鸦|doodle|stick\s*figure|line\s*drawing/i, desc: 'simple doodle with a black ballpoint pen, few wobbly strokes, minimal or no shading, cute and rough' },
+  { re: /素描|速写|铅笔|炭笔|sketch|pencil|charcoal/i, desc: 'quick graphite pencil sketch in a sketchbook, loose gestural lines, construction lines and smudges left in, partial hatching, unfinished edges' },
+  { re: /板绘|电脑画|平板画|数位|procreate|digital/i, desc: 'casual sketch drawn on a phone or tablet drawing app, visible rough brush strokes', digital: true },
+];
+
+function pickHandDrawnMedium(texts, imageStyle) {
+  for (const t of texts) {
+    const s = String(t || '');
+    if (!s) continue;
+    const hit = HAND_DRAWN_MEDIUMS.find((m) => m.re.test(s));
+    if (hit) return hit;
+  }
+  return imageStyle === 'real'
+    ? { desc: 'quick graphite pencil sketch in a sketchbook, loose gestural lines, partial hatching, unfinished edges' }
+    : { desc: 'casual sketchbook drawing with ballpoint pen lines and a little colored pencil, simple cute stylized proportions' };
+}
+
 /** 聊天配图：根据「配图：」描述与正文拼生图 prompt（纯文生图，不走参考图） */
 function buildChatContextImagePrompt(char, { presetQuery, captionText, placeHint, drawMode, userMessage } = {}) {
   const imageStyle = char?.image_style || 'anime';
@@ -5078,7 +5106,7 @@ function buildChatContextImagePrompt(char, { presetQuery, captionText, placeHint
     if (!subject) subject = 'a simple everyday object';
     // 去掉易泄露答案的标签词
     const clean = subject
-      .replace(/\b(illustration|sketch|doodle|drawing|photo|photograph)s?\b/gi, ' ')
+      .replace(/\b(?:pictionary\s+)?(?:illustration|sketch|doodle|drawing|photo|photograph)s?(?:\s+of)?\b/gi, ' ')
       .replace(/插画|素描|涂鸦|简笔画|配图/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
@@ -5093,20 +5121,22 @@ function buildChatContextImagePrompt(char, { presetQuery, captionText, placeHint
     ].join(', ');
   }
 
-  // 插画 / 手绘：按角色画风，禁止落成手机实拍风景
+  // 插画 / 手绘：画材按上下文（配图行 > 用户话 > 正文）选，像真人随手画的，不要精修 AI 插画
   if (mode === 'illustration') {
-    if (!subject) subject = 'a charming simple illustration scene';
-    const styleDesc = imageStyle === 'real'
-      ? 'digital illustration, soft painterly concept art, clean composition, not a photograph'
-      : 'anime 2D illustration, clean lineart, soft cel shading, expressive but readable, not a photograph';
+    const medium = pickHandDrawnMedium([presetQuery, userMessage, captionText], imageStyle);
+    const clean = String(subject || '')
+      .replace(/\b(?:an?\s+)?(?:illustration|drawing|sketch|painting)\s+of\s+/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim() || 'a small everyday scene';
     return [
-      styleDesc,
-      subject,
-      'hand-drawn or painted look, artistic illustration',
-      'not photorealistic, not iPhone camera roll, not Unsplash stock photo, not phone snapshot',
-      'drawn characters or creatures are ok when the subject asks; no random photoreal stranger faces',
-      'high quality illustration',
-    ].filter(Boolean).join(', ');
+      `${medium.desc}, depicting ${clean}`,
+      'made by a real person by hand, imperfect proportions, wobbly uneven lines, a few mistakes and corrections left in',
+      medium.digital
+        ? 'casual and unpolished, flat rough coloring, no rendering, no lighting effects'
+        : 'the artwork fills the frame, real paper or canvas texture visible',
+      'NOT AI art, NOT concept art, NOT polished digital painting, NOT smooth gradients, NOT glossy, NOT glowing, NOT 3D, NOT cel-shaded anime key visual, NOT symmetrical',
+      'not a photograph, no photoreal faces, no text, no signature, no watermark',
+    ].join(', ');
   }
 
   // 默认：实拍风景/静物分享
@@ -5159,13 +5189,16 @@ function chatContextAspectCandidates(opts = {}, char) {
 async function generateChatContextImage(settings, char, contentText, presetQuery = null, opts = {}) {
   const captionText = String(contentText || '').trim();
   const query = typeof presetQuery === 'string' ? presetQuery : '';
-  const drawMode = opts.drawMode
-    || detectDrawingMediaIntent({
-      userMessage: opts.userMessage || '',
-      query,
-      caption: captionText,
-    })
-    || null;
+  // drawMode='photo'：调用方已判定为实拍，不再按正文重判
+  const drawMode = opts.drawMode === 'photo'
+    ? null
+    : (opts.drawMode
+      || detectDrawingMediaIntent({
+        userMessage: opts.userMessage || '',
+        query,
+        caption: captionText,
+      })
+      || null);
   // 画画不要掉进 Unsplash 实拍风景兜底
   const allowUnsplashFallback = !drawMode && opts.allowUnsplash !== false;
   const nsfw = inferNsfwMediaRequest(opts, `${captionText}\n${query}`);
@@ -5195,7 +5228,7 @@ async function generateChatContextImage(settings, char, contentText, presetQuery
     presetQuery: query || null,
     captionText,
     placeHint: opts.placeHint || '',
-    drawMode,
+    drawMode: drawMode || 'photo',
     userMessage: opts.userMessage || '',
   });
 
@@ -7399,14 +7432,14 @@ function resolveClaimedMissingShare({
     };
   }
   // 画画/插画：补配图，不要默认成自拍实拍
-  if (drawAsk || /画好了|画完了|插画|简笔画|涂鸦/.test(blob)) {
+  if (drawAsk) {
     const sub = inferred.query || inferred.scene || fromUser?.query || fromUser?.scene
       || extractImageQueryFromText(userMessage) || extractImageQueryFromText(blob)
       || 'a charming scene';
-    const mode = drawAsk || (/简笔画|涂鸦|你画我猜|doodle/i.test(blob) ? 'doodle' : 'illustration');
+    const mode = drawAsk;
     return {
       kind: 'image',
-      query: mode === 'doodle' ? `simple doodle of ${sub}` : `illustration of ${sub}`,
+      query: mode === 'doodle' ? `pictionary doodle of ${sub}` : `illustration of ${sub}`,
     };
   }
   if (userWantsSelfie || /自拍|本人|出镜|对镜|穿搭|我这张/.test(blob)) {
@@ -7739,7 +7772,7 @@ function buildChatImagePromptSection(char, opts = {}) {
 - 只有你**真要发出文件**，或用户**明确要现在发图/视频/画画**时，才在末尾另起一行写指令（用户看不到）。发图/视频**一律走生图 API**，不要写 [相册自拍]、[相册图] 等相册标记。
 - **已发出才准说发出·硬性**：正文说「发过去了」「发你了」「拍好了」「画好了」「赶紧看」「看完评价」之前，必须先写「自拍：…」或「配图：…」。没写指令行 = 没发。禁止「配图：无」/「自拍：无」和「发过去了」写在同一条。口头商量「发张图？」不算已发出。
 - **延后再发·硬性**：对方说「到家再发」「回家发图」「之后再拍」等——本轮只答应或说在路上，**禁止**写「配图：」「自拍：」「配视频：」，也不要假装已发出。到了/到家后再另发一张。
-- **画画 / 插画 / 你画我猜**：对方要你「画一张」「画个插画」「简笔画」「你画我猜」时，写「配图：illustration of …」或「配图：simple doodle of …」（手绘/插画，可画角色、动物、物品）。**禁止**落成手机实拍风景，也**不要**用「自拍：」顶替。你画我猜请故意画简单糊一点方便猜。
+- **画画 / 插画 / 你画我猜**：对方要你「画一张」「画个插画」「简笔画」「你画我猜」时，写「配图：illustration of 画面, 画材」（手绘，可画角色、动物、物品）。画材按聊天来：对方点名了就照点名的（简笔画 simple doodle / 速写 pencil sketch / 油画 oil painting / 水彩 watercolor / 彩铅 colored pencil / 马克笔 marker / 水墨 ink wash 等）；没点名就按你的性格和此刻手边的东西选，比如本子上随手画就写 ballpoint pen sketch。你画我猜写「配图：pictionary doodle of …」，故意画简单糊一点方便猜。**禁止**落成手机实拍风景，也**不要**用「自拍：」顶替。
 - 非自拍配图（实拍分享）：写「配图：具体英文画面」（写实；主体是风景/静物/动物，**禁止写人物、人像、路人特写**）。可写 empty / no people；若必须有街景氛围，只写 distant anonymous blur at edge，禁止 mid-frame person / clear face / portrait。**拍鱼/宠物/食物/静物/风景必须用「配图：」，禁止写「自拍：」**——「自拍：」仅用于角色本人出镜。不要写就写「配图：无」。
 - **自拍 / 自己出镜视频**（「自拍：」或「配视频：」）：
   - 一行写清：**地点 + 正在做什么 + 具体穿着（贴合人设）+ 拍法 + 氛围/光线 + 表情**。越具体越好，禁止空泛的 casual outfit / bedroom selfie / everyday look。
