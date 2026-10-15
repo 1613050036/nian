@@ -240,7 +240,7 @@ function stripThinkInstructionEcho(text) {
   t = t.replace(/(?:^|\n)\s*看法只用【心智】[^\n]*/g, '\n');
   t = t.replace(/(?:^|\n)\s*还没有心智时按【性格】[^\n]*/g, '\n');
   // 系统【】规则块标题行被整段复读时剥掉（沉浸/能力/人称等）
-  t = t.replace(/【\s*(?:沉浸指令|能力|人称(?:·硬性)?|时间感知|对方在干嘛(?:·硬性)?|语言风格|当前通道(?:·硬性)?|格式)\s*】[^\n]*/g, '');
+  t = t.replace(/【\s*(?:沉浸指令|能力|人称(?:·硬性)?|时间感知|对方在干嘛(?:·硬性)?|语言风格|当前通道(?:·硬性)?|格式|背景·[^】]*|背景 vs 输出[^】]*|输出·说出口)\s*】[^\n]*/g, '');
   // 空壳模板：内容只有省略号/空白
   t = t.replace(
     new RegExp(`[\\[【［]\\s*(?:${MIND_PRIVATE_TAG})\\s*[\\]】］]\\s*[.…。．\\s]*[\\[【［]\\s*\\/\\s*(?:${MIND_PRIVATE_TAG})\\s*[\\]】］]`, 'gi'),
@@ -720,7 +720,7 @@ function stripResidualDirectiveTags(text, opts = {}) {
   // 内容是自然语言，模型有时会整段复读，导致「状态词夹在角色正常输出里看着像乱码」。
   // 剥离策略：从标记出现处开始，剥到下一个空行 / 文末 / 最多 6 行（这些块一般 1-4 行）。
   t = (() => {
-    const re = /【\s*(?:睡眠情境|时间推进|重新回复|先前打算|时间事实|收尾|沉浸指令|能力|人称|时间感知|对方在干嘛|语言风格|当前通道|格式|心里话)[·・.:：]?[^】\n]*】|<SYS_(?:SLEEP|INTENT|RETRY|TIMEADVANCE|REST_ELAPSED|PLAN_ELAPSED|NIGHT_WAKE|GOODNIGHT_RE|SLEEPY_RE|LATE_CHAT|ABSENCE)_[A-Z0-9_]*>/g;
+    const re = /【\s*(?:睡眠情境|时间推进|重新回复|先前打算|时间事实|收尾|沉浸指令|能力|人称|时间感知|对方在干嘛|语言风格|当前通道|格式|心里话|背景·|背景 vs 输出|输出·说出口)[·・.:：]?[^】\n]*】|<SYS_(?:SLEEP|INTENT|RETRY|TIMEADVANCE|REST_ELAPSED|PLAN_ELAPSED|NIGHT_WAKE|GOODNIGHT_RE|SLEEPY_RE|LATE_CHAT|ABSENCE)_[A-Z0-9_]*>/g;
     let out = '';
     let last = 0;
     let m;
@@ -2182,6 +2182,13 @@ function attachLeadingClosers(parts) {
   return out;
 }
 
+function insideQuote(s, i) {
+  const head = s.slice(0, i);
+  const open = (head.match(/[「『“]/g) || []).length;
+  const close = (head.match(/[」』”]/g) || []).length;
+  return open > close;
+}
+
 function splitBySentenceEnd(text) {
   const s = String(text || '');
   if (!s.trim()) return [];
@@ -2227,6 +2234,16 @@ function splitBySentenceEnd(text) {
       pushTo(j + 1);
       i = j;
       continue;
+    }
+    // 模型漏打句号、用空格隔句时（「好啊 我等你」）：中文之间的空格当断句
+    if (/\s/.test(ch) && CJK_CHAR.test(s[i - 1] || '') && !insideQuote(s, i)) {
+      let j = i;
+      while (j + 1 < s.length && /\s/.test(s[j + 1])) j++;
+      if (CJK_CHAR.test(s[j + 1] || '')) {
+        pushTo(i);
+        i = j;
+        continue;
+      }
     }
     if (ch === '～' || ch === '~') {
       let j = i;
@@ -3061,7 +3078,8 @@ function formatMessageForAi(msg) {
     if (/^\[一起看/.test(content)) return '[一起看]';
   }
   // 角色自己的文字气泡标为 [文字]，避免与 [语音] 混淆
-  if (role === 'assistant' && type === 'text') return `[文字] ${content}`;
+  // 入库时为了显示删了句末「。」；喂回模型必须补上，否则模型会学成整段不打句号、气泡拆不开
+  if (role === 'assistant' && type === 'text') return `[文字] ${keepVoicePeriod(content) || content}`;
   return content;
 }
 

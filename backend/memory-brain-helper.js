@@ -2407,7 +2407,11 @@ function getBrainNow(charId) {
   try {
     const cron = require('./cron');
     const blocks = cron.getSchedulePromptBlocks(char, settings, '', { recentHistory: history });
-    schedule = String(blocks.charSchedule || '').replace(/^【此刻·[^\n]+】\s*/, '').trim();
+    {
+      const raw = String(blocks.charSchedule || '');
+      const m = raw.match(/【此刻·[^\n]+】\s*([^\n]+)/);
+      schedule = m ? m[1].trim() : raw.replace(/【背景·不说出口】[\s\S]*?(?=【|$)/, '').trim();
+    }
   } catch { /* ignore */ }
   const tz = settings.timezone || 'Asia/Shanghai';
   const today = getLocalDateStr(new Date(), tz);

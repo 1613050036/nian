@@ -264,6 +264,13 @@ function attachLeadingClosers(parts) {
 }
 
 /** 按句末标点切开；引号跟在句号后面时不撕到下一条 */
+function insideQuote(s, i) {
+  const head = s.slice(0, i);
+  const open = (head.match(/[「『“]/g) || []).length;
+  const close = (head.match(/[」』”]/g) || []).length;
+  return open > close;
+}
+
 function splitBySentenceEnd(text) {
   const s = String(text || '');
   if (!s.trim()) return [];
@@ -309,6 +316,16 @@ function splitBySentenceEnd(text) {
       pushTo(j + 1);
       i = j;
       continue;
+    }
+    // 模型漏打句号、用空格隔句时（「好啊 我等你」）：中文之间的空格当断句
+    if (/\s/.test(ch) && CJK_CHAR.test(s[i - 1] || '') && !insideQuote(s, i)) {
+      let j = i;
+      while (j + 1 < s.length && /\s/.test(s[j + 1])) j++;
+      if (CJK_CHAR.test(s[j + 1] || '')) {
+        pushTo(i);
+        i = j;
+        continue;
+      }
     }
     if (ch === '～' || ch === '~') {
       let j = i;
@@ -473,7 +490,7 @@ export function stripAiContextLabels(text) {
     .replace(new RegExp(`[\\[【［]\\s*\\/\\s*(?:${mindTag})\\s*[\\]】］]`, 'gi'), '')
     .replace(new RegExp(`(?:^|\\n)\\s*(?:我)?(?:${mindTag})\\s*[:：][^\\n]*`, 'gi'), '\n')
     // 系统规则块标题被抄进气泡时剥掉
-    .replace(/【\s*(?:心里话[^】]*|沉浸指令|能力|人称(?:·硬性)?|时间感知|对方在干嘛(?:·硬性)?|语言风格|当前通道(?:·硬性)?|格式)\s*】[^\n]*/g, '')
+    .replace(/【\s*(?:心里话[^】]*|沉浸指令|能力|人称(?:·硬性)?|时间感知|对方在干嘛(?:·硬性)?|语言风格|当前通道(?:·硬性)?|格式|背景·[^】]*|背景 vs 输出[^】]*|输出·说出口)\s*】[^\n]*/g, '')
     // 历史通道标签抄写（与挂断一样，用户看不见）
     .replace(/[\[【［]\s*通话\s*[\]】］]\s*(?:你说|对方说|我说)?\s*[:：]?\s*/g, '')
     .replace(/[\[【［]\s*文字\s*[\]】］]\s*(?:你说|对方说|我说)?\s*[:：]?\s*/g, '')

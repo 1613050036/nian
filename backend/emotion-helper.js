@@ -1767,7 +1767,7 @@ function buildReplyToneBlock(char, state, opts = {}) {
     }
   }
 
-  if (lowEnergy) lines.push('身子或脑子发沉，没多少精神。');
+  if (lowEnergy) lines.push('精力偏低（背景）：只体现在回得短、懒一点；不必说出来，禁止反复说累、头沉、身子沉。');
   if (lingeringIgnore) {
     const waited = m.lastSilenceKind === 'phone_ignore'
       ? '你知道对方在刷手机，却隔了很久才理你'

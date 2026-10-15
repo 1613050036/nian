@@ -42,9 +42,9 @@ function selfLifeHint(opts = {}) {
   const bits = [];
   if (activity) bits.push(`这会儿大概在：${activity}`);
   if (busy) bits.push('正占着手/脑子');
-  if (lowEnergy) bits.push('人有点沉/累');
-  if (!bits.length) return '对照【此刻】过你自己的事；空闲还是没空，你自己知道。';
-  return bits.join('；');
+  if (lowEnergy) bits.push('精力偏低');
+  if (!bits.length) return '对照【此刻】过你自己的事（只进心里）；空闲还是没空，你自己知道，不必报给对方。';
+  return `${bits.join('；')}（背景，未问勿说）`;
 }
 
 /**
@@ -78,14 +78,14 @@ function buildLivingSenseBlock(char, opts = {}) {
   // 太平静：只留一句主场提醒，避免空壳套话堆砌
   if (!hasClimate && !motive && !hasSelfSignal) {
     return [
-      '【过日子】主场是你自己的日子，聊天是顺手拿手机。',
-      '察觉≠开口；累了/烦了可以少理。',
+      '【背景·过日子·不说出口】主场是你自己的日子，聊天是顺手拿手机。',
+      '察觉≠开口；累了/烦了可以少理。禁止把本段说明抄进气泡。',
     ].join('\n');
   }
 
   const lines = [
-    '【过日子】',
-    '主场是你自己的世界；微信只是插进来的一条线。',
+    '【背景·过日子·不说出口】',
+    '主场是你自己的世界；微信只是插进来的一条线。以下只进心里，禁止复述进开口。',
     `我这边：${life}`,
   ];
 
